@@ -333,7 +333,8 @@
       };
       let astJson = JSON.stringify(ast, mkArray)
                         .replace(/"typ"/g, '"type"')
-                        .replace(/@[0-9]+/g, '');
+                        .replace(/@[0-9]+/g, '')
+                        .replace(/"arguments":/g, '"params":');
       let newAst = JSON.parse(astJson);
       return newAst;
     }
