@@ -3,11 +3,13 @@
   <PropertyGroup>
     <Version>1.0.0</Version>
     <TargetFramework>netstandard1.6</TargetFramework>
-    <DefineConstants>FABLE_COMPILER</DefineConstants>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../../paket-files/ncave/FCS/fcs/fcs-fable/fcs-fable.fsproj" />
+    <ProjectReference Include="/Projects/dna-redux/src/FSharp.Core/FSharp.Core.fsproj" />
+    <ProjectReference Include="/Projects/FSharp.Compiler.Service_fable/fcs/fcs-fable/fcs-fable.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
