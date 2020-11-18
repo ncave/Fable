@@ -106,11 +106,20 @@ let buildLibrary() =
 
 let watchLibrary() =
     let libDir = "src/fable-library"
+    let buildDir = fullPath "build/fable-library"
     printfn "Watching %s..." libDir
     chokidar
         .watch(libDir)
         .on("change", fun _ -> buildLibrary())
         |> ignore
+
+    // runFableWithArgs ("watch " + libDir) [
+    //     "--outDir " + buildDir
+    //     "--fableLib " + buildDir
+    //     "--exclude Fable.Core"
+    //     "--define FX_NO_BIGINT"
+    //     "--define FABLE_LIBRARY"
+    // ]
 
 let buildLibraryTs() =
     let projectDir = "src/fable-library"
@@ -160,6 +169,7 @@ let testJsFast() =
     ]
 
     runFableWithArgs "src/fable-compiler-js/src" [
+        "--forcePkgs"
         "--exclude Fable.Core"
         "--define LOCAL_TEST"
     ]

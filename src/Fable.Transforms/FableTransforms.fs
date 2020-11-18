@@ -149,23 +149,31 @@ let getSubExpressions = function
     | DecisionTree(expr, targets) -> expr::(List.map snd targets)
     | DecisionTreeSuccess(_, boundValues, _) -> boundValues
 
-let deepExists (f: Expr -> bool) expr =
-    let rec deepExistsInner (exprs: ResizeArray<Expr>) =
-        let mutable found = false
-        let subExprs = ResizeArray()
-        for e in exprs do
-            if not found then
-                subExprs.AddRange(getSubExpressions e)
-                found <- f e
-        if found then true
-        elif subExprs.Count > 0 then deepExistsInner subExprs
-        else false
-    ResizeArray [|expr|] |> deepExistsInner
+let deepExists arg (f: 'arg -> Expr -> bool * 'arg) expr =
+    let rec deepExistsInner arg = function
+        | [] -> false
+        | e::rest ->
+            let found, subarg = f arg e
+            if found then true
+            else
+                let subexprs = getSubExpressions e
+                let found = deepExistsInner subarg subexprs
+                if found then true
+                else deepExistsInner arg rest
+    deepExistsInner arg [expr]
 
 let isIdentUsed identName expr =
-    expr |> deepExists (function
-        | IdentExpr i -> i.Name = identName
-        | _ -> false)
+    expr |> deepExists () (fun _  e ->
+        match e with
+        | IdentExpr i -> i.Name = identName, ()
+        | _ -> false, ())
+
+let isIdentCaptured identName expr =
+    expr |> deepExists false (fun isClosure  e ->
+        match e with
+        | Lambda _ | Delegate _ | ObjectExpr _ -> false, true
+        | IdentExpr i -> isClosure && i.Name = identName, isClosure
+        | _ -> false, isClosure)
 
 let replaceValues replacements expr =
     if Map.isEmpty replacements
@@ -189,16 +197,20 @@ let replaceNames replacements expr =
 
 let countReferences limit identName body =
     let mutable count = 0
-    body |> deepExists (function
+    body |> deepExists () (fun _ e ->
+        match e with
         | IdentExpr id2 when id2.Name = identName ->
             count <- count + 1
-            count > limit
-        | _ -> false) |> ignore
+            count > limit, ()
+        | _ -> false, ()) |> ignore
     count
 
 let canInlineArg identName value body =
-    not(canHaveSideEffects value)
-    && countReferences 1 identName body <= 1
+    match value with
+    | IdentExpr i -> not i.IsMutable
+    | _ ->
+        not(canHaveSideEffects value)
+        && countReferences 1 identName body <= 1
 
 module private Transforms =
     let (|LambdaOrDelegate|_|) = function
@@ -237,7 +249,9 @@ module private Transforms =
             | [] -> replaceValues replacements body
             | bindings -> Let(List.rev bindings, replaceValues replacements body)
         match e with
-        // TODO: Other binary operations and numeric types, also recursive?
+        | IfThenElse(IfThenElse(condition1, condition2, Value(BoolConstant false, _), _), thenExpr, elseExpr, r) ->
+            IfThenElse(Operation(Logical(AST.LogicalAnd, condition1, condition2), Boolean, None), thenExpr, elseExpr, r)
+        // TODO: Other binary operations and numeric types
         | Operation(Binary(AST.BinaryPlus, Value(StringConstant str1, r1), Value(StringConstant str2, r2)),_,_) ->
             Value(StringConstant(str1 + str2), addRanges [r1; r2])
         | Call(Delegate(args, body, _), info, _, _) when List.sameLength args info.Args ->
