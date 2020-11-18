@@ -648,6 +648,7 @@ let exactlyOne (xs: 'T list) =
     | 0 -> invalidArg "list" SR.inputSequenceEmpty
     | _ -> invalidArg "list" SR.inputSequenceTooLong
 
+// TODO: Optimize this
 let groupBy (projection: 'T -> 'Key) (xs: 'T list)([<Inject>] eq: System.Collections.Generic.IEqualityComparer<'Key>): ('Key * 'T list) list =
     let dict = System.Collections.Generic.Dictionary<'Key, ResizeArray<'T>>(eq)
     let keys = ResizeArray<'Key>()
