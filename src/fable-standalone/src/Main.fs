@@ -209,9 +209,48 @@ let getCompletionsAtLocation (parseResults: ParseResults) (line: int) (col: int)
     | None ->
         [||]
 
+let compileToFableAst(fableLibrary:string, parseResults:IParseResults, fileName:string,
+                        typedArrays, typescript) =
+    let res = parseResults :?> ParseResults
+    let project = res.GetProject()
+    let define = parseResults.OtherFSharpOptions |> Array.choose (fun x ->
+        if x.StartsWith("--define:") || x.StartsWith("-d:")
+        then x.[(x.IndexOf(':') + 1)..] |> Some
+        else None) |> Array.toList
+    let options = Fable.CompilerOptionsHelper.Make(define=define, ?typedArrays=typedArrays, ?typescript=typescript)
+    let com = CompilerImpl(fileName, project, options, fableLibrary)
+    let fableAst =
+        FSharp2Fable.Compiler.transformFile com
+        |> FableTransforms.transformFile com
+    let errors =
+        com.Logs |> Array.map (fun log ->
+            let r = defaultArg log.Range Fable.AST.SourceLocation.Empty
+            {
+                FileName = fileName
+                StartLineAlternate = r.start.line
+                StartColumn = r.start.column
+                EndLineAlternate = r.``end``.line
+                EndColumn = r.``end``.column
+                Message =
+                    if log.Tag = "FABLE"
+                    then "FABLE: " + log.Message
+                    else log.Message
+                IsWarning =
+                    match log.Severity with
+                    | Fable.Severity.Error -> false
+                    | Fable.Severity.Warning
+                    | Fable.Severity.Info -> true
+            })
+    (com, fableAst, errors)
+
 type BabelResult(program: Babel.Program, errors) =
     member _.Program = program
     interface IBabelResult with
+        member _.FableErrors = errors
+
+type RustResult(crate: Rust.AST.Types.Crate, errors) =
+    member _.Crate = crate
+    interface IRustResult with
         member _.FableErrors = errors
 
 let init () =
@@ -259,37 +298,11 @@ let init () =
 
         member __.CompileToBabelAst(fableLibrary:string, parseResults:IParseResults, fileName:string,
                                     ?typedArrays, ?typescript) =
-            let res = parseResults :?> ParseResults
-            let project = res.GetProject()
-            let define = parseResults.OtherFSharpOptions |> Array.choose (fun x ->
-                if x.StartsWith("--define:") || x.StartsWith("-d:")
-                then x.[(x.IndexOf(':') + 1)..] |> Some
-                else None) |> Array.toList
-            let options = Fable.CompilerOptionsHelper.Make(define=define, ?typedArrays=typedArrays, ?typescript=typescript)
-            let com = CompilerImpl(fileName, project, options, fableLibrary)
-            let ast =
-                FSharp2Fable.Compiler.transformFile com
-                |> FableTransforms.transformFile com
-                |> Fable2Babel.Compiler.transformFile com
-            let errors =
-                com.Logs |> Array.map (fun log ->
-                    let r = defaultArg log.Range Fable.AST.SourceLocation.Empty
-                    { FileName = fileName
-                      StartLineAlternate = r.start.line
-                      StartColumn = r.start.column
-                      EndLineAlternate = r.``end``.line
-                      EndColumn = r.``end``.column
-                      Message =
-                        if log.Tag = "FABLE"
-                        then "FABLE: " + log.Message
-                        else log.Message
-                      IsWarning =
-                        match log.Severity with
-                        | Fable.Severity.Error -> false
-                        | Fable.Severity.Warning
-                        | Fable.Severity.Info -> true
-                    })
-            upcast BabelResult(ast, errors)
+            let com, fableAst, errors =
+                compileToFableAst (fableLibrary, parseResults, fileName, typedArrays, typescript)
+            let babelAst =
+                fableAst |> Fable2Babel.Compiler.transformFile com
+            upcast BabelResult(babelAst, errors)
 
         member _.PrintBabelAst(babelResult, writer) =
             match babelResult with
@@ -305,6 +318,28 @@ let init () =
                 BabelPrinter.run writer babel.Program
             | _ ->
                 failwith "Unexpected Babel result"
+
+        member __.CompileToRustAst(fableLibrary:string, parseResults:IParseResults, fileName:string) =
+            let com, fableAst, errors =
+                compileToFableAst (fableLibrary, parseResults, fileName, None, None)
+            let rustAst =
+                fableAst |> Fable2Rust.Compiler.transformFile com
+            upcast RustResult(rustAst, errors)
+
+        member _.PrintRustAst(rustResult, writer) =
+            match rustResult with
+            | :? RustResult as rust ->
+                let writer =
+                    { new Rust.Printer.Writer with
+                        member _.Dispose() = writer.Dispose()
+                        member _.EscapeJsStringLiteral(str) = writer.EscapeJsStringLiteral(str)
+                        member _.MakeImportPath(path) = writer.MakeImportPath(path)
+                        member _.AddSourceMapping(mapping) = writer.AddSourceMapping(mapping)
+                        member _.Write(str) = writer.Write(str) }
+
+                Rust.Printer.run writer rust.Crate
+            | _ ->
+                failwith "Unexpected Rust result"
 
         member __.FSharpAstToString(parseResults:IParseResults, fileName:string) =
             let res = parseResults :?> ParseResults
