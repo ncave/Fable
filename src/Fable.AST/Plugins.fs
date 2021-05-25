@@ -13,6 +13,7 @@ type Language =
     | JavaScript
     | TypeScript
     | Php
+    | Rust
 
 type CompilerOptions =
       abstract TypedArrays: bool
