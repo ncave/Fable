@@ -2317,10 +2317,10 @@ module Util =
                 |> List.distinct
                 |> List.map(fun (name, constraints) ->
                     //todo map constraints
-                    mkGenericParam (mkVec []) (mkIdent (name)) (mkVec []) false (Rust.AST.Types.GenericParamKind.Type None)
+                    mkGenericParam [] (mkIdent (name)) [] false (Rust.AST.Types.GenericParamKind.Type None)
                     )
             //todo map return type if encoded as generic param
-            mkVec parameters |> mkGenerics
+            parameters |> mkGenerics
         let kind = mkFnKind header fnDecl generics (Some fnBodyBlock)
         let attrs =
             info.Attributes
@@ -2566,15 +2566,15 @@ module Util =
                 let hashedPath = hash path
                 let name = System.String.Format("import_{0:x}", hashedPath, moduleNamespace)
                 let useName = System.String.Format("import_{0:x}::{1:x}", hashedPath, moduleNamespace)
-                let attrs = mkVec [mkAttrEq "path" (path.Replace(".js", ".rs") |> sprintf "\"%s\"")] // TODO: relative path and ".rs" extension
+                let attrs = [mkAttrEq "path" (path.Replace(".js", ".rs") |> sprintf "\"%s\"")] // TODO: relative path and ".rs" extension
                 let item1 = mkUnloadedModItem attrs name
                 let item2 =
                     match selector with
                     | "" | "*" | "default" ->
-                        mkGlobUseItem ([useName] |> mkVec)
+                        mkGlobUseItem [useName]
                     | _ ->
                         let parts = selector.Split('.') |> List.ofSeq
-                        mkSimpleUseItem ((useName::parts) |> mkVec) None
+                        mkSimpleUseItem (useName::parts) None
                 [item1; item2]
             | _ -> []
             )
