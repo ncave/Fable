@@ -561,6 +561,9 @@ module Exprs =
         ExprKind.Unary(op, arg)
         |> mkExpr
 
+    let mkDerefExpr expr =
+        mkUnaryExpr UnOp.Deref expr
+
     let mkBinaryExpr op left right: Expr =
         ExprKind.Binary(op, left, right)
         |> mkExpr
