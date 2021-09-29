@@ -1120,7 +1120,6 @@ module Util =
         let mkClone expr = mkMethodCallExpr "clone" None expr []
         /// Calling this on an rc guarantees a &T, regardless of if the Rc is a ref or not
         let mkAsRef expr = mkMethodCallExpr "as_ref" None expr []
-    // For any ref counted types, these sometimes need to be unwrapped for pattern matching purposes etc
 
     let makeRefValue (com: IRustCompiler) ctx (value: Rust.Expr) =
         let callee = mkGenericPathExpr ["Rc";"from"] None
@@ -2872,8 +2871,6 @@ module Util =
             )
         let attrs = [mkAttr "derive" ["Clone";"PartialEq";"Debug"]];
         let structItem = mkStructItem attrs entName fields generics
-        //ent.MembersFunctionsAndValues |> Seq.map(fun e -> e.)
-
         [structItem]// TODO: add traits for attached members
 
     let transformClassDecl (com: IRustCompiler) ctx (decl: Fable.ClassDecl) =
