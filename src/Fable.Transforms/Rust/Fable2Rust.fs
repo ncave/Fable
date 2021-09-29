@@ -1258,11 +1258,11 @@ module Util =
                     let attrs = []
                     let ident = mkIdent fi.Name
                     let expr =
+                        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = true}}
                         if fi.IsMutable then
                             com.TransformAsExpr(ctx, value)
                             |> makeMutValue com ctx fi.FieldType
                         else
-                            let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = true}}
                             transformLeaveContextByValue com ctx fi.FieldType None value
                     mkExprField attrs ident expr false false)
             let genArgs = genArgs |> List.map (transformType com ctx) |> mkGenericArgs
