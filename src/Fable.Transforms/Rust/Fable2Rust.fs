@@ -1755,7 +1755,7 @@ module Util =
                 if ident.IsMutable
                 then init |> makeMutValue com ctx ident.Type
                 else init
-            let local = mkLocal [] pat tyOpt (Some init)
+            let local = mkLocal [] pat tyOpt (Some expr)
             // TODO : traverse body and follow references to decide on if this should be wrapped or not]
             let useages = UseageTracking.calcIdentUseages body
             let scopedVarAttrs = {  IsRef = isRef
