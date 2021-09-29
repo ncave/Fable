@@ -1208,6 +1208,69 @@ module Util =
         // TODO: remove this catch-all
         | _ -> TODO_EXPR (sprintf "%A" value)
 
+
+    let transformLeaveContextByRef (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
+        let expr = com.TransformAsExpr (ctx, e)
+        if shouldBePassByRefForParam com e.Type then
+            expr |> mkAddrOfExpr
+        else expr
+    // For any ref counted types, clone when passing over a boundary, binding, closing over, etc
+    let transformLeaveContextByValue (com: IRustCompiler) ctx t name (e: Fable.Expr): Rust.Expr =
+        let expr = com.TransformAsExpr (ctx, e)
+        let varAttrs =
+            ctx.ScopedSymbols   // todo - cover more than just root level idents
+            |> Map.tryFind name
+            |> Option.defaultValue {
+                IsRef = false
+                IsRefCountWrapped = shouldBeRefCountWrapped com t
+                IsMutable = false
+                MultipleUseages = true }
+        let isOnlyReference =
+            if varAttrs.IsRef then false
+            else
+                match e with
+                | Fable.Call _ ->
+                    //if the source is the returned value of a function, it is never bound, so we can assume this is the only reference
+                    true
+                | Fable.CurriedApply _ -> true
+                | Fable.Value(kind, r) ->
+                    //an inline value kind is also never bound, so can assume this is the only reference also
+                    true
+                | Fable.Lambda _ -> true
+                | _ ->
+                    //would need to track all useages to work out if this is actually referenced more than once, so for safety assume false
+                    false
+
+        let expr = if varAttrs.IsRef then mkDerefExpr expr else expr
+        let expr =
+            if varAttrs.IsRefCountWrapped && (varAttrs.MultipleUseages || ctx.Typegen.TakingOwnership) && not isOnlyReference then
+                mkMethodCallExpr "clone" None expr []
+            else expr
+        expr
+
+    // For any ref counted types, these sometimes need to be unwrapped for pattern matching purposes etc
+    let maybeUnwrapRef com ctx typ name expr =
+        let isRef = ctx.ScopedSymbols |> Map.tryFind name |> Option.map(fun s -> s.IsRef) |> Option.defaultValue false
+        let expr = if shouldBeRefCountWrapped com typ then mkDerefExpr expr else expr
+        if isRef then mkDerefExpr expr else expr
+
+    let transformCallArgs (com: IRustCompiler) ctx hasSpread args (argTypes: Fable.Type list) =
+        match args with
+        | []
+        | [MaybeCasted(Fable.Value(Fable.UnitConstant, _))] -> []
+        // | args when hasSpread ->
+        //     match List.rev args with
+        //     | [] -> []
+        //     | (Replacements.ArrayOrListLiteral(spreadArgs,_))::rest ->
+        //         let rest = List.rev rest |> List.map (fun e -> com.TransformAsExpr(ctx, e))
+        //         rest @ (List.map (fun e -> com.TransformAsExpr(ctx, e)) spreadArgs)
+        //     | last::rest ->
+        //         let rest = List.rev rest |> List.map (fun e -> com.TransformAsExpr(ctx, e))
+        //         rest @ [Expression.spreadElement(com.TransformAsExpr(ctx, last))]
+        | args ->
+            args |> List.map (transformLeaveContextByRef com ctx)
+
+
 (*
     let enumerator2iterator com ctx =
         let enumerator = Expression.callExpression(get None (Expression.identifier("this")) "GetEnumerator", [||])
@@ -1305,67 +1368,6 @@ module Util =
             let classExpr = Expression.classExpression(classBody, ?superClass=baseExpr)
             Expression.newExpression(classExpr, [||])
 *)
-
-    let transformLeaveContextByRef (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
-        let expr = com.TransformAsExpr (ctx, e)
-        if shouldBePassByRefForParam com e.Type then
-            expr |> mkAddrOfExpr
-        else expr
-    // For any ref counted types, clone when passing over a boundary, binding, closing over, etc
-    let transformLeaveContextByValue (com: IRustCompiler) ctx t name (e: Fable.Expr): Rust.Expr =
-        let expr = com.TransformAsExpr (ctx, e)
-        let varAttrs =
-            ctx.ScopedSymbols   // todo - cover more than just root level idents
-            |> Map.tryFind name
-            |> Option.defaultValue {
-                IsRef = false
-                IsRefCountWrapped = shouldBeRefCountWrapped com t
-                IsMutable = false
-                MultipleUseages = true }
-        let isOnlyReference =
-            if varAttrs.IsRef then false
-            else
-                match e with
-                | Fable.Call _ ->
-                    //if the source is the returned value of a function, it is never bound, so we can assume this is the only reference
-                    true
-                | Fable.CurriedApply _ -> true
-                | Fable.Value(kind, r) ->
-                    //an inline value kind is also never bound, so can assume this is the only reference also
-                    true
-                | Fable.Lambda _ -> true
-                | _ ->
-                    //would need to track all useages to work out if this is actually referenced more than once, so for safety assume false
-                    false
-
-        let expr = if varAttrs.IsRef then mkDerefExpr expr else expr
-        let expr =
-            if varAttrs.IsRefCountWrapped && (varAttrs.MultipleUseages || ctx.Typegen.TakingOwnership) && not isOnlyReference then
-                mkMethodCallExpr "clone" None expr []
-            else expr
-        expr
-
-    // For any ref counted types, these sometimes need to be unwrapped for pattern matching purposes etc
-    let maybeUnwrapRef com ctx typ name expr =
-        let isRef = ctx.ScopedSymbols |> Map.tryFind name |> Option.map(fun s -> s.IsRef) |> Option.defaultValue false
-        let expr = if shouldBeRefCountWrapped com typ then mkDerefExpr expr else expr
-        if isRef then mkDerefExpr expr else expr
-
-    let transformCallArgs (com: IRustCompiler) ctx hasSpread args (argTypes: Fable.Type list) =
-        match args with
-        | []
-        | [MaybeCasted(Fable.Value(Fable.UnitConstant, _))] -> []
-        // | args when hasSpread ->
-        //     match List.rev args with
-        //     | [] -> []
-        //     | (Replacements.ArrayOrListLiteral(spreadArgs,_))::rest ->
-        //         let rest = List.rev rest |> List.map (fun e -> com.TransformAsExpr(ctx, e))
-        //         rest @ (List.map (fun e -> com.TransformAsExpr(ctx, e)) spreadArgs)
-        //     | last::rest ->
-        //         let rest = List.rev rest |> List.map (fun e -> com.TransformAsExpr(ctx, e))
-        //         rest @ [Expression.spreadElement(com.TransformAsExpr(ctx, last))]
-        | args ->
-            args |> List.map (transformLeaveContextByRef com ctx)
 
 (*
     let resolveExpr t strategy rustExpr: Rust.Stmt =
