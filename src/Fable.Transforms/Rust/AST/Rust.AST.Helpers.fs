@@ -284,6 +284,9 @@ module Patterns =
         PatKind.TupleStruct(path, mkVec fields)
         |> mkPat
 
+    let mkRefPat pat =
+        PatKind.Ref(pat, Mutability.Not) |> mkPat
+
 [<AutoOpen>]
 module Visibilities =
 
