@@ -38,6 +38,7 @@ type TypegenContext = {
     FavourClosureTraitOverFunctionPointer: bool
     IsParamType: bool
     TakingOwnership: bool
+    // optimization todo - IsAssigningUnwrapped/IsAssigningWrapped - if only ref allow a T rather than a Rc<T>. Can be determined in let where MultipleUseages is calculated
 }
 
 type ScopedVarAttrs = {
@@ -67,6 +68,18 @@ type IRustCompiler =
     // abstract TransformAsStatements: Context * ReturnStrategy option * Fable.Expr -> Rust.Stmt array
     // abstract TransformImport: Context * selector:string * path:string -> Rust.Expr
     // abstract TransformFunction: Context * string option * Fable.Ident list * Fable.Expr -> (Pattern array) * BlockStatement
+
+// TODO : Centralise and find a home for this
+module Helpers =
+    module Map =
+        let merge a b =
+            (a, b) ||> Map.fold(fun acc key t -> acc |> Map.add key t)
+        let mergeAndAggregate aggregateFn a b =
+            (a, b) ||> Map.fold(fun acc key value ->
+                        match acc |> Map.tryFind key with
+                        | Some old -> acc |> Map.add key (aggregateFn old value)
+                        | None -> acc |> Map.add key value
+                        )
 
 // TODO: All things that depend on the library should be moved to Replacements
 // to become independent of the specific implementation
@@ -165,7 +178,11 @@ module TypeInfo =
         | Fable.String -> true
         | Fable.Type.LambdaType _
         | Fable.Type.DelegateType _ -> true
+        | Fable.Type.DeclaredType(eref, _) ->
+            let ety = com.GetEntity eref
+            ety.IsValueType && ety.IsFSharpRecord
         | _ -> false
+
 
     /// Check to see if the type is to be modelled as a ref counted wrapper such as Rc<T> or Arc<T> in a multithreaded context
     let shouldBeRefCountWrapped (com: IRustCompiler) t =
@@ -183,11 +200,14 @@ module TypeInfo =
             && not ent.IsValueType  // F# struct records/unions/tuples are modelled as value types, and should support Copy where possible, or Clone if 1 or more children are not Copy
         | _ -> false
 
-    let shouldBePassByRefForParam com t=
+    let shouldBePassByRefForParam (com: IRustCompiler) t=
         let isPassByRefTy =
             match t with
             | Fable.Type.LambdaType _
             | Fable.Type.DelegateType _ -> true
+            | Fable.Type.DeclaredType(eref, _) ->
+                let ety = com.GetEntity eref
+                not ety.IsValueType
             | _ -> false
         shouldBeRefCountWrapped com t || isPassByRefTy
     let rec tryGetIdent = function
@@ -1169,7 +1189,7 @@ module Util =
             if ctx.Typegen.TakingOwnership then
                 args |> List.map (fun e -> transformLeaveContextByValue com ctx e.Type None e)
             else
-                args |> List.map (transformLeaveContextByRef com ctx)
+                args |> List.map (transformLeaveContextByPreferredBorrow com ctx)
 
     let maybeUnwrapRef com ctx typ name expr =
         let isRef = ctx.ScopedSymbols |> Map.tryFind name |> Option.map(fun s -> s.IsRef) |> Option.defaultValue false
@@ -1267,8 +1287,8 @@ module Util =
                     mkExprField attrs ident expr false false)
             let genArgs = genArgs |> List.map (transformType com ctx) |> mkGenericArgs
             let path = mkFullNamePath ent.FullName genArgs
-            mkStructExpr path fields // TODO: range
-            |> makeRefValue com ctx
+            let expr = mkStructExpr path fields // TODO: range
+            if ent.IsValueType then expr else expr |> makeRefValue com ctx
         | Fable.NewAnonymousRecord (values, fieldNames, _genArgs) ->
             Fable.NewTuple (values, false) |> transformValue com ctx None   //temporary, use tuples!
         //     let values = List.mapToArray (fun x -> com.TransformAsExpr(ctx, x)) values
@@ -1284,15 +1304,7 @@ module Util =
         // TODO: remove this catch-all
         | _ -> TODO_EXPR (sprintf "%A" value)
 
-
-    let transformLeaveContextByRef (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
-        let expr = com.TransformAsExpr (ctx, e)
-        if shouldBePassByRefForParam com e.Type then
-            expr |> mkAddrOfExpr
-        else expr
-    // For any ref counted types, clone when passing over a boundary, binding, closing over, etc
-    let transformLeaveContextByValue (com: IRustCompiler) ctx t (name: string option) (e: Fable.Expr): Rust.Expr =
-        let expr = com.TransformAsExpr (ctx, e)
+    let calcVarAttrsAndOnlyRef com ctx t name e=
         let name = name |> Option.defaultValue(tryGetIdent e |> Option.defaultValue "")
         let varAttrs =
             ctx.ScopedSymbols   // todo - cover more than just root level idents
@@ -1313,16 +1325,27 @@ module Util =
                 | Fable.Value(kind, r) ->
                     //an inline value kind is also never bound, so can assume this is the only reference also
                     true
-                | Fable.Lambda _ -> true
+                | Fable.Lambda _
+                | Fable.Delegate _ -> true
                 | _ ->
                     //would need to track all useages to work out if this is actually referenced more than once, so for safety assume false
-                    false
+                    not varAttrs.MultipleUseages
+        varAttrs, isOnlyReference
+    let transformLeaveContextByPreferredBorrow (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
+        let expr = com.TransformAsExpr (ctx, e)
+        let varAttrs, isOnlyReference = calcVarAttrsAndOnlyRef com ctx e.Type None e
+        if shouldBePassByRefForParam com e.Type then
+            expr |> mkAddrOfExpr
+        else if isCloneable com e.Type && not isOnlyReference then RcHelper.mkClone expr else expr
+    let transformLeaveContextByValue (com: IRustCompiler) ctx t (name: string option) (e: Fable.Expr): Rust.Expr =
+        let expr = com.TransformAsExpr (ctx, e)
+        let varAttrs, isOnlyReference = calcVarAttrsAndOnlyRef com ctx t name e
 
-        let expr =
-            if varAttrs.IsRefCountWrapped && (varAttrs.MultipleUseages || ctx.Typegen.TakingOwnership) && not isOnlyReference then
-                RcHelper.mkClone expr
-            else if varAttrs.IsRef then mkDerefExpr expr else expr
-        expr
+        if varAttrs.IsRefCountWrapped && not isOnlyReference then
+            RcHelper.mkClone expr
+        else if varAttrs.IsRef then mkDerefExpr expr
+        else if isCloneable com t && not isOnlyReference then RcHelper.mkClone expr //shouldn't really be using a rchelper as this is NOT an rc
+        else expr
 
 (*
     let enumerator2iterator com ctx =
@@ -1661,15 +1684,17 @@ module Util =
                     let thenExpr =
                         mkGenericPathExpr [fieldName] None
 
-                    mkMatchExpr expr [
-                        mkArm [] pat None thenExpr
-                        mkArm [] WILD_PAT None (mkMacroExpr "unreachable" [])
-                    ]
-                    // TODO : Cannot use if let because it moves references out of their Rc's, which breaks borrow checker. We cannot bind
-                    // let ifExpr = mkLetExpr pat expr
-                    // let thenExpr = mkGenericPathExpr [fieldName] None
-                    // let elseExpr = mkMacroExpr "unreachable" []
-                    // mkIfThenElseExpr ifExpr thenExpr elseExpr
+                    let useMatch = false    // maybe something that can be parameterised?
+                    if useMatch then
+                        mkMatchExpr expr [
+                            mkArm [] pat None thenExpr
+                            mkArm [] WILD_PAT None (mkMacroExpr "unreachable" [])
+                        ]
+                    else
+                        let ifExpr = mkLetExpr pat expr
+                        let thenExpr = mkGenericPathExpr [fieldName] None
+                        let elseExpr = mkMacroExpr "unreachable" []
+                        mkIfThenElseExpr ifExpr thenExpr elseExpr
                 | _ ->
                     failwith "Should not happen"
 
@@ -1730,7 +1755,13 @@ module Util =
         | _ -> [expr]
 
     let transformLet (com: IRustCompiler) ctx bindings body =
-        let makeLetStmt (ident: Fable.Ident, value: Fable.Expr) =
+        let useages =
+            let bodyUseages = UseageTracking.calcIdentUseages body
+            let bindingsUseages = bindings |> List.map (snd >> UseageTracking.calcIdentUseages)
+            (Map.empty, bodyUseages::bindingsUseages)
+            ||> List.fold (Helpers.Map.mergeAndAggregate (+))
+
+        let makeLetStmt ctx (ident: Fable.Ident, value: Fable.Expr) =
             let isRef = false
             let isMut = false
             let pat = mkIdentPat ident.Name isRef isMut
@@ -1756,20 +1787,21 @@ module Util =
                 else init
             let local = mkLocal [] pat tyOpt (Some expr)
             // TODO : traverse body and follow references to decide on if this should be wrapped or not]
-            let useages = UseageTracking.calcIdentUseages body
             let scopedVarAttrs = {  IsRef = isRef
                                     IsMutable = isMut
                                     IsRefCountWrapped = shouldBeRefCountWrapped com ident.Type
                                     MultipleUseages = UseageTracking.hasMultipleUseages ident.Name useages
                                      }
-            mkLocalStmt local, (ident.Name, scopedVarAttrs)
-        let letStmtsAndCtx = bindings |> List.map makeLetStmt
-        let letStmts = letStmtsAndCtx |> List.map fst
-        let ctx =
-            let scopedSymbols =
-                (ctx.ScopedSymbols, letStmtsAndCtx)
-                ||> List.fold (fun acc (_, (name, attrs)) ->Map.add name attrs acc)
-            { ctx with ScopedSymbols = scopedSymbols }
+            let ctxNext = { ctx with ScopedSymbols = ctx.ScopedSymbols |> Map.add ident.Name scopedVarAttrs }
+            mkLocalStmt local, ctxNext
+        let ctx, letStmtsRev = //Context needs to be threaded through all lets, appending itself to ScopedSymbols each time
+            ((ctx, []), bindings)
+            ||> List.fold (fun (ctx, lst) (ident, expr) ->
+                let (stmt, ctxNext) = makeLetStmt ctx (ident, expr)
+                (ctxNext, stmt::lst)
+                )
+        let letStmts = letStmtsRev |> List.rev
+
         let bodyStmts =
             match body with
             | Fable.Sequential exprs ->
@@ -1949,8 +1981,7 @@ module Util =
                                             MultipleUseages = UseageTracking.hasMultipleUseages friendlyName useages })
                     fromIdents @ fromExtra
                 let scopedSymbolsNext =
-                    (ctx.ScopedSymbols, symbolsAndNames)
-                    ||> List.fold (fun acc (name, arg) -> acc |> Map.add name arg)
+                    Helpers.Map.merge ctx.ScopedSymbols (symbolsAndNames |> Map.ofList)
                 let ctx = { ctx with ScopedSymbols = scopedSymbolsNext; Typegen = { ctx.Typegen with TakingOwnership = true } }
                 transformLeaveContextByValue com ctx (bodyExpr.Type) None bodyExpr
             mkArm attrs pat guard body
