@@ -38,14 +38,14 @@ type TypegenContext = {
     FavourClosureTraitOverFunctionPointer: bool
     IsParamType: bool
     TakingOwnership: bool
-    // optimization todo - IsAssigningUnwrapped/IsAssigningWrapped - if only ref allow a T rather than a Rc<T>. Can be determined in let where MultipleUseages is calculated
+    // optimization todo - IsAssigningUnwrapped/IsAssigningWrapped - if only ref allow a T rather than a Rc<T>. Can be determined in let where MultipleUsages is calculated
 }
 
 type ScopedVarAttrs = {
     IsMutable: bool
     IsRef: bool
     IsRefCountWrapped: bool
-    MultipleUseages: bool
+    MultipleUsages: bool
 }
 
 type Context =
@@ -215,17 +215,17 @@ module TypeInfo =
         | Fable.Get (expr, kind, _, _) -> tryGetIdent expr
         | _ -> None
     module UseageTracking =
-        let calcIdentUseages expr =
-            let mutable useages = Map.empty
+        let calcIdentUsages expr =
+            let mutable usages = Map.empty
             let something = FableTransforms.deepExists
                                 (function | Fable.Expr.IdentExpr ident ->
-                                            let count = useages |> Map.tryFind ident.Name |> Option.defaultValue 0
-                                            useages <- useages |> Map.add ident.Name (count + 1)
+                                            let count = usages |> Map.tryFind ident.Name |> Option.defaultValue 0
+                                            usages <- usages |> Map.add ident.Name (count + 1)
                                             false
                                           | _ -> false) expr
                                 |> ignore
-            useages
-        let hasMultipleUseages (name: string) =
+            usages
+        let hasMultipleUsages (name: string) =
             Map.tryFind name >> Option.map(fun x -> x > 1) >> Option.defaultValue false
             //fun _ -> true
     // let transformTypeInfo (com: IRustCompiler) ctx r (genMap: Map<string, Rust.Expr>) (t: Fable.Type): Rust.Ty =
@@ -795,12 +795,8 @@ module Util =
     let ident (id: Fable.Ident) =
         Identifier.identifier(id.Name, ?loc=id.Range)
 *)
-    let transformIdent com ctx r (ident: Fable.Ident) =
-        let genArgs = None // TODO: generics
-        let expr = mkGenericPathExpr [ident.Name] genArgs
-        // if isCopyType com ident.Type then expr
-        // else expr |> mkAddrOfExpr
-        expr
+    let transformIdent _com _ctx _r (ident: Fable.Ident) =
+        mkGenericPathExpr [ident.Name] None
 
     let transformIdentGet com ctx r (ident: Fable.Ident) =
         let expr = transformIdent com ctx r ident
@@ -1135,11 +1131,11 @@ module Util =
     let transformCurry (com: IRustCompiler) (ctx: Context) _r expr arity: Rust.Expr =
         com.TransformAsExpr(ctx, Replacements.curryExprAtRuntime com arity expr)
 *)
-    module RcHelper =
-        /// This guarantees a new owned Rc<T>
-        let mkClone expr = mkMethodCallExpr "clone" None expr []
-        /// Calling this on an rc guarantees a &T, regardless of if the Rc is a ref or not
-        let mkAsRef expr = mkMethodCallExpr "as_ref" None expr []
+    /// This guarantees a new owned Rc<T>
+    let makeClone expr = mkMethodCallExpr "clone" None expr []
+
+    /// Calling this on an rc guarantees a &T, regardless of if the Rc is a ref or not
+    let makeAsRef expr = mkMethodCallExpr "as_ref" None expr []
 
     let makeRefValue (com: IRustCompiler) ctx (value: Rust.Expr) =
         let callee = mkGenericPathExpr ["Rc";"from"] None
@@ -1151,7 +1147,7 @@ module Util =
         mkCallExpr callee [value]
 
     // For any ref counted types, clone when passing over a boundary, binding, closing over, etc
-    let transformMaybeCloneRef (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
+    let transformExprCloneRef (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
         let expr = com.TransformAsExpr (ctx, e)
         let isOnlyReference =
             match e with
@@ -1169,7 +1165,7 @@ module Util =
 
          // todo : if the source is also not refwrapped but still cloneable, clone if not isOnlyReference
         if (shouldBeRefCountWrapped com e.Type || isCloneable com e.Type) && not isOnlyReference then
-            RcHelper.mkClone expr
+            makeClone expr
         else expr
 
     let transformCallArgs (com: IRustCompiler) ctx hasSpread args (argTypes: Fable.Type list) =
@@ -1201,7 +1197,7 @@ module Util =
     let prepareRefForPatternMatch com ctx typ name expr =
         let isRef = ctx.ScopedSymbols |> Map.tryFind name |> Option.map(fun s -> s.IsRef) |> Option.defaultValue false
         if shouldBeRefCountWrapped com typ
-        then RcHelper.mkAsRef expr
+        then makeAsRef expr
         else
             if isRef then expr else mkAddrOfExpr expr
 
@@ -1313,7 +1309,7 @@ module Util =
                 IsRef = false
                 IsRefCountWrapped = shouldBeRefCountWrapped com t
                 IsMutable = false
-                MultipleUseages = true }
+                MultipleUsages = true }
         let isOnlyReference =
             if varAttrs.IsRef then false
             else
@@ -1329,22 +1325,22 @@ module Util =
                 | Fable.Delegate _ -> true
                 | _ ->
                     //would need to track all useages to work out if this is actually referenced more than once, so for safety assume false
-                    not varAttrs.MultipleUseages
+                    not varAttrs.MultipleUsages
         varAttrs, isOnlyReference
     let transformLeaveContextByPreferredBorrow (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
         let expr = com.TransformAsExpr (ctx, e)
         let varAttrs, isOnlyReference = calcVarAttrsAndOnlyRef com ctx e.Type None e
         if shouldBePassByRefForParam com e.Type then
             expr |> mkAddrOfExpr
-        else if isCloneable com e.Type && not isOnlyReference then RcHelper.mkClone expr else expr
+        else if isCloneable com e.Type && not isOnlyReference then makeClone expr else expr
     let transformLeaveContextByValue (com: IRustCompiler) ctx t (name: string option) (e: Fable.Expr): Rust.Expr =
         let expr = com.TransformAsExpr (ctx, e)
         let varAttrs, isOnlyReference = calcVarAttrsAndOnlyRef com ctx t name e
 
         if varAttrs.IsRefCountWrapped && not isOnlyReference then
-            RcHelper.mkClone expr
+            makeClone expr
         else if varAttrs.IsRef then mkDerefExpr expr
-        else if isCloneable com t && not isOnlyReference then RcHelper.mkClone expr //shouldn't really be using a rchelper as this is NOT an rc
+        else if isCloneable com t && not isOnlyReference then makeClone expr //shouldn't really be using a rchelper as this is NOT an rc
         else expr
 
 (*
@@ -1756,8 +1752,8 @@ module Util =
 
     let transformLet (com: IRustCompiler) ctx bindings body =
         let useages =
-            let bodyUseages = UseageTracking.calcIdentUseages body
-            let bindingsUseages = bindings |> List.map (snd >> UseageTracking.calcIdentUseages)
+            let bodyUseages = UseageTracking.calcIdentUsages body
+            let bindingsUseages = bindings |> List.map (snd >> UseageTracking.calcIdentUsages)
             (Map.empty, bodyUseages::bindingsUseages)
             ||> List.fold (Helpers.Map.mergeAndAggregate (+))
 
@@ -1790,7 +1786,7 @@ module Util =
             let scopedVarAttrs = {  IsRef = isRef
                                     IsMutable = isMut
                                     IsRefCountWrapped = shouldBeRefCountWrapped com ident.Type
-                                    MultipleUseages = UseageTracking.hasMultipleUseages ident.Name useages
+                                    MultipleUsages = UseageTracking.hasMultipleUsages ident.Name useages
                                      }
             let ctxNext = { ctx with ScopedSymbols = ctx.ScopedSymbols |> Map.add ident.Name scopedVarAttrs }
             mkLocalStmt local, ctxNext
@@ -1963,7 +1959,7 @@ module Util =
             // TODO: vars, boundValues
             let body =
                 //com.TransformAsExpr(ctx, bodyExpr)
-                let useages = UseageTracking.calcIdentUseages bodyExpr
+                let useages = UseageTracking.calcIdentUsages bodyExpr
                 let symbolsAndNames =
                     let fromIdents =
                         idents
@@ -1971,14 +1967,14 @@ module Util =
                             id.Name, {  IsRef = true
                                         IsMutable = id.IsMutable
                                         IsRefCountWrapped = shouldBeRefCountWrapped com id.Type
-                                        MultipleUseages = UseageTracking.hasMultipleUseages id.Name useages })
+                                        MultipleUsages = UseageTracking.hasMultipleUsages id.Name useages })
                     let fromExtra =
                         extraVals
                         |> List.map (fun (name, friendlyName, t) ->
                             friendlyName, { IsRef = true
                                             IsMutable = false
                                             IsRefCountWrapped = shouldBeRefCountWrapped com t
-                                            MultipleUseages = UseageTracking.hasMultipleUseages friendlyName useages })
+                                            MultipleUsages = UseageTracking.hasMultipleUsages friendlyName useages })
                     fromIdents @ fromExtra
                 let scopedSymbolsNext =
                     Helpers.Map.merge ctx.ScopedSymbols (symbolsAndNames |> Map.ofList)
@@ -2729,14 +2725,14 @@ module Util =
         let fnDecl = mkFnDecl inputs fnRetTy
         let ctx =
             let scopedSymbols =
-                let useages = UseageTracking.calcIdentUseages body
+                let useages = UseageTracking.calcIdentUsages body
                 (ctx.ScopedSymbols, args)
                 ||> List.fold (fun acc arg ->
                     //todo optimizations go here
                     let scopedVarAttrs = {  IsRef = shouldBePassByRefForParam com arg.Type
                                             IsMutable = arg.IsMutable
                                             IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
-                                            MultipleUseages = UseageTracking.hasMultipleUseages arg.Name useages
+                                            MultipleUsages = UseageTracking.hasMultipleUsages arg.Name useages
                                             }
                     acc |> Map.add arg.Name scopedVarAttrs)
             { ctx with ScopedSymbols = scopedSymbols }
@@ -2752,7 +2748,7 @@ module Util =
             |> List.map (fun i -> mkParamFromType i.Name (transformParamType com ctx i.Type) false false)
         let fnDecl = mkFnDecl inputs fnRetTy
         let nestedCtx =
-            let useages = UseageTracking.calcIdentUseages body
+            let useages = UseageTracking.calcIdentUsages body
             let scopedSymbols =
                 (ctx.ScopedSymbols, args)
                 ||> List.fold (fun acc arg ->
@@ -2760,7 +2756,7 @@ module Util =
                     let scopedVarAttrs = {  IsRef = shouldBePassByRefForParam com arg.Type
                                             IsMutable = arg.IsMutable
                                             IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
-                                            MultipleUseages = UseageTracking.hasMultipleUseages arg.Name useages
+                                            MultipleUsages = UseageTracking.hasMultipleUsages arg.Name useages
                                             }
                     acc |> Map.add arg.Name scopedVarAttrs)
             { ctx with ScopedSymbols = scopedSymbols }
@@ -2792,7 +2788,7 @@ module Util =
                 for name in closedOverCloneableNames do
                     let pat = mkIdentPat (name) false false
                     let identExpr = com.TransformAsExpr(ctx, makeIdentExpr name)
-                    let nexpr = RcHelper.mkClone identExpr
+                    let nexpr = makeClone identExpr
                     let letExpr = mkLetExpr pat nexpr
                     yield letExpr |> Rust.AST.Types.StmtKind.Semi |> mkStmt
 
