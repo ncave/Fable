@@ -56,15 +56,15 @@ let ``Union with wrapped type works`` () =
 
 type DeepRecord = {Value: string}
 type DeepWrappedUnion =
-    | DeepWrappedA of string * DeepRecord //not working yet - does not render pattern correctly (no variables bound)
+    | DeepWrappedA of string * DeepRecord
     | DeepWrappedB of string
     | DeepWrappedC of int
     | DeepWrappedD of DeepRecord
     | DeepWrappedE of int * int
-    | DeepWrappedF of WrappedUnion //not working yet - creates a panic!(Error(&(Rc::from("Match failure: Fable.Tests.Union.DeepWrappedUnion") where Error is not defined yet
+    | DeepWrappedF of WrappedUnion
     | DeepWrappedG of {| X: DeepRecord; Y: int|}
 let matchStrings = function
-    | DeepWrappedA (s, d) -> d.Value + s //todo - not working
+    | DeepWrappedA (s, d) -> d.Value + s
     | DeepWrappedB s -> s
     | DeepWrappedC c -> "nothing"
     | DeepWrappedD d -> d.Value
@@ -105,7 +105,6 @@ let ``Deep union with tuped prim type works`` () =
     c |> matchNumbers |> equal 42
     g |> matchNumbers |> equal 365
 
-// // this tests is breaking if uncommented
 [<Fact>]
 let ``Multi-case Union with wrapped type works`` () =
     let b = DeepWrappedB "hello"
