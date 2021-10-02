@@ -1334,7 +1334,7 @@ module Util =
                 expr |> mkAddrOfExpr
             else expr
         else
-            makeClone expr
+            expr |> mkDerefExpr
 
     let transformLeaveContextByValue (com: IRustCompiler) ctx (t: Fable.Type option) (name: string option) (e: Fable.Expr): Rust.Expr =
         let expr = com.TransformAsExpr (ctx, e)
