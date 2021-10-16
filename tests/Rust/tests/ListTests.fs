@@ -8,10 +8,11 @@ let ``List.Empty works`` () =
     // as it prevents the generic type being instantiated, and breaks.
     // WRONG: let actual: bool = List::isEmpty(&List::empty())
     // RIGHT: let actual: bool = List::isEmpty(&List::empty::<i32>()) // somehow
-    let mutable xs: int list = []
+    let xs: int list = []
     List.isEmpty xs |> equal true
-    let mutable xs = List.empty<int>
-    List.isEmpty xs |> equal true
+    let xs2 = List.empty<int>
+    List.isEmpty xs2 |> equal true
+    xs |> equal xs2
 
 [<Fact>]
 let ``List.Cons works`` () =

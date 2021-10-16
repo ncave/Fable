@@ -30,7 +30,15 @@ type UsedNames =
     DeclarationScopes: HashSet<string>
     CurrentDeclarationScope: HashSet<string> }
 
+// A type guide points out what the expected type attributes are, so we can infer what unwraps/transforms are needed to get to it
+type TypeGuide = {
+    ExpectsRef: bool
+    ExpectsRefCountWrapped: bool
+    ExpectsCellWrapped: bool
+}
+
 type TypegenContext = {
+    TypeGuide: TypeGuide option
     FavourClosureTraitOverFunctionPointer: bool
     IsParamType: bool
     TakingOwnership: bool
@@ -38,9 +46,10 @@ type TypegenContext = {
     // optimization todo - IsAssigningUnwrapped/IsAssigningWrapped - if only ref allow a T rather than a Rc<T>. Can be determined in let where HasMultipleUses is calculated
 }
 
+//This tells us what the ACTUAL type attributes are of an ident.
 type ScopedVarAttrs = {
     IsArm: bool
-    IsMutable: bool
+    IsCellWrapped: bool
     IsRef: bool
     IsRefCountWrapped: bool
     HasMultipleUses: bool
@@ -56,6 +65,13 @@ type Context =
     ScopedTypeParams: Set<string>
     ScopedSymbols: FSharp.Collections.Map<string, ScopedVarAttrs>
     Typegen: TypegenContext }
+module ContextHelper =
+    let withTypegen typegen ctx = {ctx with Typegen = typegen}
+    let withTypeGuide guide ctx =  withTypegen {ctx.Typegen with TypeGuide = Some guide} ctx
+    let withRawTypeGuide ctx =  withTypegen {ctx.Typegen with TypeGuide = Some { ExpectsRef = false; ExpectsRefCountWrapped = false; ExpectsCellWrapped = false }} ctx
+    let withNoTypeGuide ctx = withTypegen {ctx.Typegen with TypeGuide = None} ctx
+    let withTypegenNotTakingOwnership ctx =
+        { ctx with Typegen = {ctx.Typegen with TakingOwnership = false }}
 
 type IRustCompiler =
     inherit Fable.Compiler
@@ -145,6 +161,7 @@ module UsageTracking =
 
     let calcIdentUsages expr =
         let mutable usages = Map.empty
+        let mutable mutUsages = Map.empty
         let mutable shadowed = Set.empty
         do FableTransforms.deepExists
             (function
@@ -170,13 +187,17 @@ module UsageTracking =
                     if usages |> Map.containsKey identPotentiallyShadowing.Name then
                         shadowed <- shadowed |> Set.add identPotentiallyShadowing.Name
                     false
+                | Fable.Expr.Set(Fable.Expr.IdentExpr ident, _, _, _, _) ->
+                    let count = mutUsages |> Map.tryFind ident.Name |> Option.defaultValue 0
+                    mutUsages <- mutUsages |> Map.add ident.Name (count + 1)
+                    false
                 | Fable.Expr.DecisionTree _
                 | Fable.Expr.IfThenElse _ ->
                     shadowed <- Set.empty //for all conditional control flow, cannot reason about branches in shadow so just be conservative and assume no shadowing
                     false
                 | _ -> false) expr
             |> ignore
-        usages
+        usages, mutUsages
 
     let isArmScoped ctx name =
         ctx.ScopedSymbols |> Map.tryFind name |> Option.map (fun s -> s.IsArm) |> Option.defaultValue false
@@ -184,6 +205,8 @@ module UsageTracking =
     let isRefScoped ctx name =
         ctx.ScopedSymbols |> Map.tryFind name |> Option.map (fun s -> s.IsRef) |> Option.defaultValue false
 
+    let hasAnyUses (name: string) =
+        Map.tryFind name >> Option.map(fun x -> x > 0) >> Option.defaultValue false
     let hasMultipleUses (name: string) =
         Map.tryFind name >> Option.map(fun x -> x > 1) >> Option.defaultValue false
         //fun _ -> true
@@ -277,6 +300,15 @@ module TypeInfo =
             let ent = com.GetEntity(entRef)
             // TODO: work out if this entity is/can be Copy. If copy, do not wrap?
             not ent.IsValueType  // F# struct records/unions/tuples are modelled as value types, and should support Copy where possible, or Clone if 1 or more children are not Copy
+    let tryGetCtxForSymbol com ctx t name =
+        ctx.ScopedSymbols
+            |> Map.tryFind name
+            |> Option.defaultValue {
+                IsArm = false
+                IsRef = false
+                IsRefCountWrapped = shouldBeRefCountWrapped com t
+                IsCellWrapped = false
+                HasMultipleUses = true }
 
     let shouldBePassByRefForParam (com: IRustCompiler) t =
         // let isPassByRefTy =
@@ -290,6 +322,31 @@ module TypeInfo =
         //     | _ -> false
         // shouldBeRefCountWrapped com t || isPassByRefTy
         true
+
+    let hackyInferIfCellWrappedFromExpr expr =
+        //this is a dirty hack, the solution is probably to return a ScopedVarAttrs with the rust expr for every transform, that way we can thread back the actual attrs
+        //we basically get the mutability state of the deepest thing in the subtree
+        match expr with
+        | Fable.Expr.Get (expr, Fable.GetKind.FieldGet (name, isMut), _, _) ->
+            match expr.Type with
+            | Fable.DeclaredType _ ->
+                isMut
+            | _ -> false
+        | Fable.Expr.Get (expr, Fable.GetKind.ExprGet idx, Fable.DeclaredType (ref, args), _) ->
+            match expr.Type, idx.Type with
+            | Fable.Array t, Fable.Number(Int32, None) ->
+                true
+            | _ -> false
+        | Fable.IdentExpr ident ->
+            ident.IsMutable
+        | _ -> false
+    let makeDefaultTypeGuide com isMut t =
+        if isMut then
+            { ExpectsRefCountWrapped = false; ExpectsCellWrapped = true; ExpectsRef = false;}
+        else
+            if shouldBeRefCountWrapped com t then
+                { ExpectsRefCountWrapped = true; ExpectsCellWrapped = false; ExpectsRef = false;}
+            else { ExpectsRefCountWrapped = false; ExpectsCellWrapped = false; ExpectsRef = false;}
 
     let rec tryGetIdent = function
         | Fable.IdentExpr i -> i.Name |> Some
@@ -309,11 +366,13 @@ module TypeInfo =
         makeFullNamePathExpr importName None
 
     let makeLibCall com ctx moduleName memberName (args: Rust.Expr list) =
+        let ctx = ContextHelper.withTypegenNotTakingOwnership ctx
         let _ = getImportName com ctx moduleName memberName // just to get the import
         let callee = mkGenericPathExpr [moduleName; memberName] None
         mkCallExpr callee args
 
     let libCall com ctx r moduleName memberName (args: Fable.Expr list) =
+        let ctx = ContextHelper.withTypegenNotTakingOwnership ctx
         let libPath = getLibPath com moduleName
         let callee = makeImport com ctx None memberName libPath
         Util.callFunction com ctx r callee args
@@ -401,7 +460,7 @@ module TypeInfo =
         //         if not(Array.isEmpty generics) then
         //             Expression.arrayExpression(generics)
         //     |]
-        let ty =
+        let transformType ctx t =
             match t with
             // | Fable.Any -> primitiveType "obj"
             | Fable.GenericParam(name, _) ->
@@ -513,11 +572,20 @@ module TypeInfo =
 
             // TODO: remove this catch-all
             | _ -> TODO_TYPE (sprintf "%A" t)
-
-        if shouldBeRefCountWrapped com t && not ctx.Typegen.IsRawType
-        then makeRefTy com ty
-        else ty
-
+        let ctxExGuide = ctx |> ContextHelper.withNoTypeGuide
+        let ty = transformType ctxExGuide t
+        match ctx.Typegen.TypeGuide with
+        | Some guide ->
+            match guide.ExpectsRefCountWrapped, guide.ExpectsCellWrapped with
+            | true, true ->
+                ty |> makeMutTy com ctx t |> makeRefTy com
+            | true, false -> ty |> makeRefTy com
+            | false, true -> ty |> makeMutTy com ctx t
+            | false, false -> ty
+        | None ->
+            if shouldBeRefCountWrapped com t && not ctx.Typegen.IsRawType
+            then makeRefTy com ty
+            else ty
 (*
     let transformReflectionInfo com ctx r (ent: Fable.Entity) generics =
         if ent.IsFSharpRecord then
@@ -922,7 +990,7 @@ module Util =
     let transformIdentGet com ctx r (ident: Fable.Ident) =
         let expr = transformIdent com ctx r ident
         if ident.IsMutable
-        then expr |> mutableGet com ctx r ident.Type
+        then expr |> mutableGet com ctx
         else expr
 
     let transformIdentSet com ctx r (ident: Fable.Ident) (value: Rust.Expr) =
@@ -1067,12 +1135,12 @@ module Util =
         ClassMember.classMethod(ClassImplicitConstructor, Expression.identifier("constructor"), args, body)
 *)
     let callFunction com ctx range (callee: Rust.Expr) (args: Fable.Expr list) =
-        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = false}}
+        let ctx = ctx |> ContextHelper.withNoTypeGuide |> ContextHelper.withTypegenNotTakingOwnership
         let trArgs = transformCallArgs com ctx false args []
         mkCallExpr callee trArgs //?loc=range)
 
     let callFunctionTakingOwnership com ctx range (callee: Rust.Expr) (args: Fable.Expr list) =
-        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = true}}
+        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = true; TypeGuide = None}}
         let trArgs = transformCallArgs com ctx false args []
         mkCallExpr callee trArgs //?loc=range)
 
@@ -1080,7 +1148,6 @@ module Util =
     let iife (com: IRustCompiler) ctx (expr: Fable.Expr) =
         let fnExpr = transformLambda com ctx [] expr
         let range = None // TODO:
-        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = false}}
         callFunction com ctx range fnExpr []
         // let _, body = com.TransformFunction(ctx, None, [], expr)
         // // Use an arrow function in case we need to capture `this`
@@ -1296,12 +1363,119 @@ module Util =
             else
                 args |> List.map (transformLeaveContextByPreferredBorrow com ctx)
 
+    let fitToGuide com ctx
+        takingOwnership
+        (targetGuide: TypeGuide)
+        (sourceTypeAttrs: ScopedVarAttrs, sourceType: Fable.Type,e , expr: Rust.Expr) =
+        let expr =
+            match sourceTypeAttrs, targetGuide with
+            //noops
+            | { IsRef=isRef; IsRefCountWrapped = isRcWrapped; IsCellWrapped = isCellWrapped },
+                { ExpectsRef = expectsRef; ExpectsRefCountWrapped = expectsRcWrapped; ExpectsCellWrapped = expectsCellWrapped; }
+                when isRef = expectsRef && isRcWrapped = expectsRcWrapped && isCellWrapped = expectsCellWrapped ->
+                expr
+            //rc and cells
+            | { IsRef=isRef; IsRefCountWrapped = false; IsCellWrapped = false },
+                { ExpectsRef = expectsRef; ExpectsRefCountWrapped = false; ExpectsCellWrapped = false; } when isRef = expectsRef->
+                expr
+            | { IsRef=isRef; IsRefCountWrapped = false; IsCellWrapped = false },
+                { ExpectsRef = expectsRef; ExpectsRefCountWrapped = true; ExpectsCellWrapped = true; } when isRef = expectsRef ->
+                expr |> makeMutValue com sourceType |> makeRefValue com
+            | { IsRef=isRef; IsRefCountWrapped = false; IsCellWrapped = false },
+                { ExpectsRef = expectsRef; ExpectsRefCountWrapped = true; ExpectsCellWrapped = false; } when isRef = expectsRef ->
+                expr |> makeRefValue com
+            | { IsRef=isRef; IsRefCountWrapped = false; IsCellWrapped = false },
+                { ExpectsRef = expectsRef; ExpectsRefCountWrapped = false; ExpectsCellWrapped = true; } when isRef = expectsRef ->
+                expr |> makeMutValue com sourceType
+            //just cells
+            | { IsRef=false; IsRefCountWrapped = false; IsCellWrapped = true },
+                { ExpectsRef = false; ExpectsRefCountWrapped = false; ExpectsCellWrapped = false } ->
+                expr |> mutableGet com ctx
+            | { IsRef=false; IsRefCountWrapped = false; IsCellWrapped = false },
+                { ExpectsRef = false; ExpectsRefCountWrapped = false; ExpectsCellWrapped = true } ->
+                expr |> makeMutValue com sourceType
+            //Just refs
+            | { IsRef=false; IsRefCountWrapped = isRcWrapped; IsCellWrapped = isCellWrapped },
+                { ExpectsRef = true; ExpectsRefCountWrapped = expectsRcWrapped; ExpectsCellWrapped = expectsCellWrapped; }
+                when isRcWrapped = expectsRcWrapped && isCellWrapped = expectsCellWrapped ->
+                expr |> mkAddrOfExpr
+            | { IsRef=true; IsRefCountWrapped = isRcWrapped; IsCellWrapped = isCellWrapped },
+                { ExpectsRef = true; ExpectsRefCountWrapped = expectsRcWrapped; ExpectsCellWrapped = expectsCellWrapped; }
+                when isRcWrapped = expectsRcWrapped && isCellWrapped = expectsCellWrapped ->
+                expr
+            | { IsRef=true; IsRefCountWrapped = isRcWrapped; IsCellWrapped = isCellWrapped },
+                { ExpectsRef = false; ExpectsRefCountWrapped = expectsRcWrapped; ExpectsCellWrapped = expectsCellWrapped; }
+                when isRcWrapped = expectsRcWrapped && isCellWrapped = expectsCellWrapped ->
+                expr |> mkDerefExpr |> mkParenExpr
+             //Combinations
+            | { IsRef=false; IsRefCountWrapped = true; IsCellWrapped = isCellWrapped },
+                { ExpectsRef = false; ExpectsRefCountWrapped = false; ExpectsCellWrapped = expectsCellWrapped }
+                when isCellWrapped = expectsCellWrapped->
+                expr |> mkDerefExpr |> mkParenExpr
+            | { IsRef=false; IsRefCountWrapped = false; IsCellWrapped = isCellWrapped },
+                { ExpectsRef = false; ExpectsRefCountWrapped = true; ExpectsCellWrapped = expectsCellWrapped }
+                when isCellWrapped = expectsCellWrapped->
+                expr |> makeRefValue com |> mkParenExpr
+            | { IsRef=true; IsRefCountWrapped = true; IsCellWrapped = isCellWrapped },
+                { ExpectsRef = false; ExpectsRefCountWrapped = false; ExpectsCellWrapped = expectsCellWrapped }
+                when isCellWrapped = expectsCellWrapped->
+                expr |> mkDerefExpr |> mkParenExpr |> mkDerefExpr |> mkParenExpr
+            //todo - still a bunch of cases not covered
+            | a, b ->
+                TODO_EXPR (sprintf "Conversion from %A to %A not yet implemented" a b)
+            //expr //todo, use catch all to cover everything
+        if takingOwnership then
+            let isOnlyReference =
+                if sourceTypeAttrs.IsRef then false
+                else
+                    match e with
+                    | Fable.Call _ ->
+                        //if the source is the returned value of a function, it is never bound, so we can assume this is the only reference
+                        true
+                    | Fable.CurriedApply _ -> true
+                    | Fable.Value(kind, r) ->
+                        //an inline value kind is also never bound, so can assume this is the only reference also
+                        true
+                    | Fable.Operation(Fable.Binary _, _, _) ->
+                        true //Anything coming out of an operation is as good as being returned from a function
+                    | Fable.Lambda _
+                    | Fable.Delegate _ -> true
+                    | Fable.IfThenElse _
+                    | Fable.DecisionTree _ ->
+                        true //All control constructs in f# return expressions, and as return statements are always take ownership, we can assume this is already owned, and not bound
+                    //| Fable.Sequential _ -> true    //this is just a wrapper, so do not need to clone, passthrough only. (currently breaks some stuff, needs looking at)
+                    | _ ->
+                        not sourceTypeAttrs.HasMultipleUses
+            if targetGuide.ExpectsRefCountWrapped && not isOnlyReference then
+                makeClone expr
+            // else if isCloneable com t e && sourceTypeAttrs.HasMultipleUses then
+            //     makeClone expr
+            else expr
+        else
+            expr
+    let postTransformFitToGuide com (ctx: Context) takingOwnership (source, t, e, expr) =
+        match ctx.Typegen.TypeGuide with
+        | Some guide -> fitToGuide com ctx takingOwnership guide (source, t, e, expr)
+        | None -> expr
+
     let transformExprMaybeUnwrapRef (com: IRustCompiler) ctx fableExpr =
         let expr = com.TransformAsExpr(ctx, fableExpr)
-        let name = getIdentName fableExpr
-        if isRefScoped ctx name
-        then mkDerefExpr expr |> mkParenExpr
-        else expr
+        let t = fableExpr.Type
+        let varAttrs =
+            let name = tryGetIdent fableExpr
+            match name with
+            | Some name ->
+                tryGetCtxForSymbol com ctx t name
+            | None ->
+                {   IsArm = false
+                    IsRef = false
+                    IsRefCountWrapped = shouldBeRefCountWrapped com t
+                    IsCellWrapped = hackyInferIfCellWrappedFromExpr fableExpr
+                    HasMultipleUses = true }
+        let guide = {   ExpectsRef = false
+                        ExpectsRefCountWrapped = false
+                        ExpectsCellWrapped = false }
+        fitToGuide com ctx false guide (varAttrs, t, fableExpr, expr)
 
     let prepareRefForPatternMatch com ctx typ name expr =
         if shouldBeRefCountWrapped com typ
@@ -1312,147 +1486,130 @@ module Util =
             else mkAddrOfExpr expr
 
     let transformValue (com: IRustCompiler) (ctx: Context) r value: Rust.Expr =
-        match value with
-        // | Fable.BaseValue (None, _) -> Super(None)
-        // | Fable.BaseValue (Some boundIdent, _) -> identAsExpr boundIdent
-        // | Fable.ThisValue _ -> makeFullNamePathExpr (rawIdent "self") None
-        // | Fable.TypeInfo t -> transformTypeInfo com ctx r Map.empty t
-        // | Fable.Null _t ->
-        //     // if com.Options.typescript
-        //     //     let ta = typeAnnotation com ctx t |> TypeAnnotation |> Some
-        //     //     upcast Identifier("null", ?typeAnnotation=ta, ?loc=r)
-        //     // else
-        //         Expression.nullLiteral(?loc=r)
-        // | Fable.UnitConstant -> undefined r
-        | Fable.BoolConstant b -> mkBoolLitExpr b //, ?loc=r)
-        | Fable.CharConstant c -> mkCharLitExpr c //, ?loc=r)
-        | Fable.StringConstant s -> mkStrLitExpr s |> makeString com ctx
-        | Fable.NumberConstant (x, kind, _) ->
-            let expr =
-                match kind with
-                | Float32 | Float64 -> mkFloatLitExpr (abs x) //, ?loc=r)
-                | Int8 | Int16 | Int32 -> mkIntLitExpr (uint64 (abs x)) //, ?loc=r)
-                | UInt8 | UInt16 | UInt32 -> mkIntLitExpr (uint64 (abs x)) //, ?loc=r)
-            // if negative, wrap in unary minus
-            if x < 0.0
-            then expr |> mkNegExpr
-            else expr
-        // | Fable.RegexConstant (source, flags) -> Expression.regExpLiteral(source, flags, ?loc=r)
-        | Fable.NewArray (values, typ) ->
-            makeArray com ctx typ values
-        | Fable.NewArrayFrom (expr, typ) ->
-            makeArrayFrom com ctx typ expr
-        | Fable.NewTuple (values, isStruct) ->
-            let tuple = makeTuple com ctx values
-            if isStruct then tuple else makeRefValue com tuple
-        | Fable.NewList (headAndTail, _typ) ->
-            match headAndTail with
-            | None ->
-                libCall com ctx r "List" "empty" []
-            | Some(head, Fable.Value(Fable.NewList(None, _),_)) ->
-                libCall com ctx r "List" "singleton" [head]
-            |  Some(head, tail) ->
-                libCall com ctx r "List" "cons" [head; tail]
+        let t = Fable.Value(value, r).Type
+        let expr =
+            let ctx = ctx |> ContextHelper.withNoTypeGuide
 
-            // let rec getItems acc = function
-            //     | None -> List.rev acc, None
-            //     | Some(head, Fable.Value(Fable.NewList(tail, _),_)) -> getItems (head::acc) tail
-            //     | Some(head, tail) -> List.rev (head::acc), Some tail
-            // match getItems [] headAndTail with
-            // | [], None ->
-            //     libCall com ctx r "List" "empty" []
-            // | [expr], None ->
-            //     libCall com ctx r "List" "singleton" [expr]
-            // // | exprs, None ->
-            // //     [makeArray com ctx exprs]
-            // //     |> libCall com ctx r "List" "ofArray"
-            // | [head], Some tail ->
-            //     libCall com ctx r "List" "cons" [head; tail]
-            // // | exprs, Some tail ->
-            // //     [makeArray com ctx exprs; tail]
-            // //     |> libCall com ctx r "List" "ofArrayWithTail"
-
-        | Fable.NewOption (value, t, _) ->
             match value with
-            | Some arg ->
-                let callee = mkGenericPathExpr [rawIdent "Some"] None
-                callFunctionTakingOwnership com ctx r callee [arg]
-            | None ->
-                mkGenericPathExpr [rawIdent "None"] None
-            |> makeRefValue com
-        // | Fable.EnumConstant (x, _) ->
-        //     com.TransformAsExpr(ctx, x)
-        | Fable.NewRecord (values, ent, genArgs) ->
-            let ent = com.GetEntity(ent)
-            let fields =
-                Seq.zip ent.FSharpFields values
-                |> Seq.map (fun (fi, value) ->
-                    let attrs = []
-                    let expr =
-                        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = true}}
-                        if fi.IsMutable then
-                            com.TransformAsExpr(ctx, value)
-                            |> makeMutValue com fi.FieldType
-                        else
+            // | Fable.BaseValue (None, _) -> Super(None)
+            // | Fable.BaseValue (Some boundIdent, _) -> identAsExpr boundIdent
+            // | Fable.ThisValue _ -> makeFullNamePathExpr (rawIdent "self") None
+            // | Fable.TypeInfo t -> transformTypeInfo com ctx r Map.empty t
+            // | Fable.Null _t ->
+            //     // if com.Options.typescript
+            //     //     let ta = typeAnnotation com ctx t |> TypeAnnotation |> Some
+            //     //     upcast Identifier("null", ?typeAnnotation=ta, ?loc=r)
+            //     // else
+            //         Expression.nullLiteral(?loc=r)
+            // | Fable.UnitConstant -> undefined r
+            | Fable.BoolConstant b -> mkBoolLitExpr b //, ?loc=r)
+            | Fable.CharConstant c -> mkCharLitExpr c //, ?loc=r)
+            | Fable.StringConstant s -> mkStrLitExpr s |> makeString com ctx
+            | Fable.NumberConstant (x, kind, _) ->
+                let expr =
+                    match kind with
+                    | Float32 | Float64 -> mkFloatLitExpr (abs x) //, ?loc=r)
+                    | Int8 | Int16 | Int32 -> mkIntLitExpr (uint64 (abs x)) //, ?loc=r)
+                    | UInt8 | UInt16 | UInt32 -> mkIntLitExpr (uint64 (abs x)) //, ?loc=r)
+                // if negative, wrap in unary minus
+                if x < 0.0
+                then expr |> mkNegExpr
+                else expr
+            // | Fable.RegexConstant (source, flags) -> Expression.regExpLiteral(source, flags, ?loc=r)
+            | Fable.NewArray (values, typ) ->
+                makeArray com ctx typ values
+            | Fable.NewArrayFrom (expr, typ) ->
+                makeArrayFrom com ctx typ expr
+            | Fable.NewTuple (values, isStruct) ->
+                makeTuple com ctx values
+            | Fable.NewList (headAndTail, _typ) ->
+                match headAndTail with
+                | None ->
+                    libCall com ctx r "List" "empty" []
+                | Some(head, Fable.Value(Fable.NewList(None, _),_)) ->
+                    libCall com ctx r "List" "singleton" [head]
+                |  Some(head, tail) ->
+                    libCall com ctx r "List" "cons" [head; tail]
+
+                // let rec getItems acc = function
+                //     | None -> List.rev acc, None
+                //     | Some(head, Fable.Value(Fable.NewList(tail, _),_)) -> getItems (head::acc) tail
+                //     | Some(head, tail) -> List.rev (head::acc), Some tail
+                // match getItems [] headAndTail with
+                // | [], None ->
+                //     libCall com ctx r "List" "empty" []
+                // | [expr], None ->
+                //     libCall com ctx r "List" "singleton" [expr]
+                // // | exprs, None ->
+                // //     [makeArray com ctx exprs]
+                // //     |> libCall com ctx r "List" "ofArray"
+                // | [head], Some tail ->
+                //     libCall com ctx r "List" "cons" [head; tail]
+                // // | exprs, Some tail ->
+                // //     [makeArray com ctx exprs; tail]
+                // //     |> libCall com ctx r "List" "ofArrayWithTail"
+
+            | Fable.NewOption (value, t, _) ->
+                match value with
+                | Some arg ->
+                    let callee = mkGenericPathExpr [rawIdent "Some"] None
+                    callFunctionTakingOwnership com ctx r callee [arg]
+                | None ->
+                    mkGenericPathExpr [rawIdent "None"] None
+            // | Fable.EnumConstant (x, _) ->
+            //     com.TransformAsExpr(ctx, x)
+            | Fable.NewRecord (values, ent, genArgs) ->
+                let ent = com.GetEntity(ent)
+                let fields =
+                    Seq.zip ent.FSharpFields values
+                    |> Seq.map (fun (fi, value) ->
+                        let attrs = []
+                        let expr =
+                            let typegen = makeDefaultTypeGuide com fi.IsMutable fi.FieldType
+                            let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = true; TypeGuide = Some typegen }}
                             transformLeaveContextByValue com ctx (Some fi.FieldType) None value
-                    mkExprField attrs fi.Name expr false false)
-            let genArgs = transformGenArgs com ctx genArgs
-            let path = makeFullNamePath ent.FullName genArgs
-            let expr = mkStructExpr path fields // TODO: range
-            if ent.IsValueType then expr else expr |> makeRefValue com
-        | Fable.NewAnonymousRecord (values, fieldNames, _genArgs) ->
-            Fable.NewTuple (values, false) |> transformValue com ctx None   //temporary, use tuples!
-        //     let values = List.mapToArray (fun x -> com.TransformAsExpr(ctx, x)) values
-        //     Array.zip fieldNames values |> makeJsObject
-        | Fable.NewUnion (values, tag, ent, genArgs) ->
-            let ent = com.GetEntity(ent)
-            let genArgs = transformGenArgs com ctx genArgs
-            let unionCase = ent.UnionCases |> List.item tag
-            let callee = makeFullNamePathExpr unionCase.FullName genArgs
-            callFunctionTakingOwnership com ctx r callee values
-            |> makeRefValue com
-        | Fable.ThisValue t ->
-            mkGenericPathExpr [rawIdent "self"] None
-        // TODO: remove this catch-all
-        | _ -> TODO_EXPR (sprintf "%A" value)
+                        mkExprField attrs fi.Name expr false false)
+                let genArgs = transformGenArgs com ctx genArgs
+                let path = makeFullNamePath ent.FullName genArgs
+                mkStructExpr path fields // TODO: range
+            | Fable.NewAnonymousRecord (values, fieldNames, _genArgs) ->
+                Fable.NewTuple (values, false) |> transformValue com ctx None   //temporary, use tuples!
+            //     let values = List.mapToArray (fun x -> com.TransformAsExpr(ctx, x)) values
+            //     Array.zip fieldNames values |> makeJsObject
+            | Fable.NewUnion (values, tag, ent, genArgs) ->
+                let ent = com.GetEntity(ent)
+                let genArgs = transformGenArgs com ctx genArgs
+                let unionCase = ent.UnionCases |> List.item tag
+                let callee = makeFullNamePathExpr unionCase.FullName genArgs
+                callFunctionTakingOwnership com ctx r callee values
+            | Fable.ThisValue t ->
+                mkGenericPathExpr [rawIdent "self"] None
+            // TODO: remove this catch-all
+            | _ -> TODO_EXPR (sprintf "%A" value)
+        let isLibwrapped =  //these types are wrapped by libcalls, so they are ALWAYS wrapped and cannot be presented any other way
+            match value with
+            | Fable.StringConstant _
+            | Fable.NewArray _
+            | Fable.NewArrayFrom _ -> true
+            | _ -> false
+        let guide = ctx.Typegen.TypeGuide |> Option.defaultWith (fun () -> makeDefaultTypeGuide com false t)
+        let attrs = {
+            IsRefCountWrapped = isLibwrapped
+            IsCellWrapped = false
+            IsRef = false
+            IsArm= false
+            HasMultipleUses = false
+        }
+        fitToGuide com ctx false guide (attrs, t, Fable.Value(value, r), expr)
 
     let calcVarAttrsAndOnlyRef com ctx t name e =
         let name = name |> Option.defaultValue (getIdentName e)
-        let varAttrs =
-            ctx.ScopedSymbols   // todo - cover more than just root level idents
-            |> Map.tryFind name
-            |> Option.defaultValue {
-                IsArm = false
-                IsRef = false
-                IsRefCountWrapped = shouldBeRefCountWrapped com t
-                IsMutable = false
-                HasMultipleUses = true }
-        let isOnlyReference =
-            if varAttrs.IsRef then false
-            else
-                match e with
-                | Fable.Call _ ->
-                    //if the source is the returned value of a function, it is never bound, so we can assume this is the only reference
-                    true
-                | Fable.CurriedApply _ -> true
-                | Fable.Value(kind, r) ->
-                    //an inline value kind is also never bound, so can assume this is the only reference also
-                    true
-                | Fable.Operation(Fable.Binary _, _, _) ->
-                    true //Anything coming out of an operation is as good as being returned from a function
-                | Fable.Lambda _
-                | Fable.Delegate _ -> true
-                | Fable.IfThenElse _
-                | Fable.DecisionTree _ ->
-                    true //All control constructs in f# return expressions, and as return statements are always take ownership, we can assume this is already owned, and not bound
-                //| Fable.Sequential _ -> true    //this is just a wrapper, so do not need to clone, passthrough only. (currently breaks some stuff, needs looking at)
-                | _ ->
-                    not varAttrs.HasMultipleUses
-        varAttrs, isOnlyReference
+        let varAttrs = tryGetCtxForSymbol com ctx t name
+        varAttrs
 
     let transformLeaveContextByPreferredBorrow (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Expr =
         let expr = com.TransformAsExpr (ctx, e)
-        let varAttrs, isOnlyReference = calcVarAttrsAndOnlyRef com ctx e.Type None e
+        let varAttrs = calcVarAttrsAndOnlyRef com ctx e.Type None e
         if shouldBePassByRefForParam com e.Type then
             if not varAttrs.IsRef then
                 expr |> mkAddrOfExpr
@@ -1463,18 +1620,21 @@ module Util =
             else expr
 
     let transformLeaveContextByValue (com: IRustCompiler) ctx (t: Fable.Type option) (name: string option) (e: Fable.Expr): Rust.Expr =
-        let expr = com.TransformAsExpr (ctx, e)
+        let innerCtx = ctx |> ContextHelper.withNoTypeGuide
+        let expr = com.TransformAsExpr (innerCtx, e)
         let t = t |> Option.defaultValue e.Type
-        let varAttrs, isOnlyReference = calcVarAttrsAndOnlyRef com ctx t name e
+        let varAttrs = calcVarAttrsAndOnlyRef com ctx t name e
+        postTransformFitToGuide com ctx true (varAttrs, t, e, expr)
+        // let expr = if varAttrs.IsCellWrapped && not varAttrs.IsRefCountWrapped then expr |> mutableGet com ctx else expr
 
-        if varAttrs.IsRefCountWrapped && not isOnlyReference then
-            makeClone expr
-        elif isCloneable com t e && not isOnlyReference then
-            makeClone expr // shouldn't really be using a rchelper as this is NOT an rc
-        elif varAttrs.IsRef then
-            makeClone expr
-        else
-            expr
+        // if varAttrs.IsRefCountWrapped && not isOnlyReference then
+        //     makeClone expr
+        // elif isCloneable com t e && not isOnlyReference then
+        //     makeClone expr // shouldn't really be using a rchelper as this is NOT an rc
+        // elif varAttrs.IsRef then
+        //     makeClone expr
+        // else
+        //     expr
 (*
     let enumerator2iterator com ctx =
         let enumerator = Expression.callExpression(get None (Expression.identifier("this")) "GetEnumerator", [||])
@@ -1547,64 +1707,91 @@ module Util =
         | Some(Assign left) -> ExpressionStatement(assign None left rustExpr)
         | Some(Target left) -> ExpressionStatement(assign None (left |> Expression.Identifier) rustExpr)
 *)
-    let transformOperation com ctx range typ opKind: Rust.Expr =
-        match opKind with
-        | Fable.Unary(op, TransformExpr com ctx expr) ->
-            match op with
-            | UnaryOperator.UnaryMinus -> mkNegExpr expr //?loc=range)
-            | UnaryOperator.UnaryPlus -> expr // no unary plus
-            | UnaryOperator.UnaryNot -> mkNotExpr expr //?loc=range)
-            | UnaryOperator.UnaryNotBitwise -> mkNotExpr expr //?loc=range)
-            | UnaryOperator.UnaryTypeof -> failwith "UnaryTypeof not supported"
-            | UnaryOperator.UnaryDelete -> failwith "UnaryDelete not supported"
-            | UnaryOperator.UnaryVoid -> failwith "Should not happen"
+    let transformOperation (com: IRustCompiler) ctx range typ opKind: Rust.Expr =
+        let expr =
+            let ctx = ctx |> ContextHelper.withNoTypeGuide
 
-        | Fable.Binary(op, left, right) ->
-            let kind =
+            match opKind with
+            | Fable.Unary(op, expr) ->
+                let ctx = ctx |> ContextHelper.withRawTypeGuide
+                let expr = transformExprMaybeUnwrapRef com ctx expr
                 match op with
-                | BinaryOperator.BinaryEqual -> Rust.BinOpKind.Eq
-                | BinaryOperator.BinaryUnequal -> Rust.BinOpKind.Ne
-                | BinaryOperator.BinaryEqualStrict -> Rust.BinOpKind.Eq
-                | BinaryOperator.BinaryUnequalStrict -> Rust.BinOpKind.Ne
-                | BinaryOperator.BinaryLess -> Rust.BinOpKind.Lt
-                | BinaryOperator.BinaryLessOrEqual -> Rust.BinOpKind.Le
-                | BinaryOperator.BinaryGreater -> Rust.BinOpKind.Gt
-                | BinaryOperator.BinaryGreaterOrEqual -> Rust.BinOpKind.Ge
-                | BinaryOperator.BinaryShiftLeft -> Rust.BinOpKind.Shl
-                | BinaryOperator.BinaryShiftRightSignPropagating -> Rust.BinOpKind.Shr
-                | BinaryOperator.BinaryShiftRightZeroFill -> Rust.BinOpKind.Shr
-                | BinaryOperator.BinaryMinus -> Rust.BinOpKind.Sub
-                | BinaryOperator.BinaryPlus -> Rust.BinOpKind.Add
-                | BinaryOperator.BinaryMultiply -> Rust.BinOpKind.Mul
-                | BinaryOperator.BinaryDivide -> Rust.BinOpKind.Div
-                | BinaryOperator.BinaryModulus -> Rust.BinOpKind.Rem
-                | BinaryOperator.BinaryExponent -> failwithf "BinaryExponent not supported. TODO: implement with pow."
-                | BinaryOperator.BinaryOrBitwise -> Rust.BinOpKind.BitOr
-                | BinaryOperator.BinaryXorBitwise -> Rust.BinOpKind.BitXor
-                | BinaryOperator.BinaryAndBitwise -> Rust.BinOpKind.BitAnd
-                | BinaryOperator.BinaryIn -> failwithf "BinaryIn not supported"
-                | BinaryOperator.BinaryInstanceOf -> failwithf "BinaryInstanceOf not supported"
+                | UnaryOperator.UnaryMinus -> mkNegExpr expr //?loc=range)
+                | UnaryOperator.UnaryPlus -> expr // no unary plus
+                | UnaryOperator.UnaryNot -> mkNotExpr expr //?loc=range)
+                | UnaryOperator.UnaryNotBitwise -> mkNotExpr expr //?loc=range)
+                | UnaryOperator.UnaryTypeof -> failwith "UnaryTypeof not supported"
+                | UnaryOperator.UnaryDelete -> failwith "UnaryDelete not supported"
+                | UnaryOperator.UnaryVoid -> failwith "Should not happen"
 
-            let left = transformExprMaybeUnwrapRef com ctx left
-            let right = transformExprMaybeUnwrapRef com ctx right
+            | Fable.Binary(op, left, right) ->
+                let kind =
+                    match op with
+                    | BinaryOperator.BinaryEqual -> Rust.BinOpKind.Eq
+                    | BinaryOperator.BinaryUnequal -> Rust.BinOpKind.Ne
+                    | BinaryOperator.BinaryEqualStrict -> Rust.BinOpKind.Eq
+                    | BinaryOperator.BinaryUnequalStrict -> Rust.BinOpKind.Ne
+                    | BinaryOperator.BinaryLess -> Rust.BinOpKind.Lt
+                    | BinaryOperator.BinaryLessOrEqual -> Rust.BinOpKind.Le
+                    | BinaryOperator.BinaryGreater -> Rust.BinOpKind.Gt
+                    | BinaryOperator.BinaryGreaterOrEqual -> Rust.BinOpKind.Ge
+                    | BinaryOperator.BinaryShiftLeft -> Rust.BinOpKind.Shl
+                    | BinaryOperator.BinaryShiftRightSignPropagating -> Rust.BinOpKind.Shr
+                    | BinaryOperator.BinaryShiftRightZeroFill -> Rust.BinOpKind.Shr
+                    | BinaryOperator.BinaryMinus -> Rust.BinOpKind.Sub
+                    | BinaryOperator.BinaryPlus -> Rust.BinOpKind.Add
+                    | BinaryOperator.BinaryMultiply -> Rust.BinOpKind.Mul
+                    | BinaryOperator.BinaryDivide -> Rust.BinOpKind.Div
+                    | BinaryOperator.BinaryModulus -> Rust.BinOpKind.Rem
+                    | BinaryOperator.BinaryExponent -> failwithf "BinaryExponent not supported. TODO: implement with pow."
+                    | BinaryOperator.BinaryOrBitwise -> Rust.BinOpKind.BitOr
+                    | BinaryOperator.BinaryXorBitwise -> Rust.BinOpKind.BitXor
+                    | BinaryOperator.BinaryAndBitwise -> Rust.BinOpKind.BitAnd
+                    | BinaryOperator.BinaryIn -> failwithf "BinaryIn not supported"
+                    | BinaryOperator.BinaryInstanceOf -> failwithf "BinaryInstanceOf not supported"
 
-            match typ, kind with
-            | Fable.String, Rust.BinOpKind.Add ->
-                //proprietary string concatenation - String + &String = String
-                let left = mkMethodCallExpr "to_string" None left []
-                let strTy = primitiveType "str" |> makeRefTy com
-                mkBinaryExpr (mkBinOp kind) left (mkAddrOfExpr right)
-                |> makeRefValue com
-                |> mkCastExpr strTy
-            | _ ->
+
+                // let ctx =
+                //     let keepTypeGuide =
+                //         match op with
+                //         | BinaryOperator.BinaryMinus
+                //         | BinaryOperator.BinaryPlus
+                //         | BinaryOperator.BinaryMultiply
+                //         | BinaryOperator.BinaryDivide
+                //         | BinaryOperator.BinaryModulus
+                //         | BinaryOperator.BinaryExponent -> true
+                //         | _ -> false
+                //     if keepTypeGuide then ctx else {ctx with Typegen = {ctx.Typegen with TypeGuide = None}}
+                let left = transformExprMaybeUnwrapRef com ctx left
+                let right = transformExprMaybeUnwrapRef com ctx right
+
+                match typ, kind with
+                | Fable.String, Rust.BinOpKind.Add ->
+                    //proprietary string concatenation - String + &String = String
+                    let left = mkMethodCallExpr "to_string" None left []
+                    let strTy = primitiveType "str" |> makeRefTy com
+                    mkBinaryExpr (mkBinOp kind) left (mkAddrOfExpr right)
+                    |> makeRefValue com
+                    |> mkCastExpr strTy
+                | _ ->
+                    mkBinaryExpr (mkBinOp kind) left right //?loc=range)
+
+            | Fable.Logical(op, TransformExpr com ctx left, TransformExpr com ctx right) ->
+                let kind =
+                    match op with
+                    | LogicalOperator.LogicalOr -> Rust.BinOpKind.Or
+                    | LogicalOperator.LogicalAnd -> Rust.BinOpKind.And
                 mkBinaryExpr (mkBinOp kind) left right //?loc=range)
-
-        | Fable.Logical(op, TransformExpr com ctx left, TransformExpr com ctx right) ->
-            let kind =
-                match op with
-                | LogicalOperator.LogicalOr -> Rust.BinOpKind.Or
-                | LogicalOperator.LogicalAnd -> Rust.BinOpKind.And
-            mkBinaryExpr (mkBinOp kind) left right //?loc=range)
+        match ctx.Typegen.TypeGuide with
+        | Some guide ->
+            let attrs = {   IsArm = false
+                            IsCellWrapped = false
+                            IsRef = false
+                            IsRefCountWrapped =
+                                match typ with | Fable.String -> true | _ -> false
+                            HasMultipleUses = false }
+            fitToGuide com ctx false guide (attrs, typ, Fable.Operation(opKind, typ, range) , expr)
+        | None -> expr
 
     let transformEmit (com: IRustCompiler) ctx range (info: Fable.EmitInfo) =
         // for now implemented as emit macro
@@ -1624,16 +1811,13 @@ module Util =
         else expr
 
     let transformCall (com: IRustCompiler) ctx range typ calleeExpr (callInfo: Fable.CallInfo) =
-        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = false } }
+        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = false; TypeGuide = None } }
         let args = transformCallArgs com ctx callInfo.HasSpread callInfo.Args callInfo.SignatureArgTypes
         match calleeExpr with
         | Fable.Get(callee, Fable.FieldGet(membName, _), _t, _r) ->
             // this is an instance call
             let callee = com.TransformAsExpr(ctx, callee)
-            let expr = mkMethodCallExpr membName None callee args
-            if shouldBeRefCountWrapped com typ
-            then makeRefValue com expr //todo - not convinced this is right. Normally the returned value is already wrapped
-            else expr
+            mkMethodCallExpr membName None callee args
         | _ ->
             match callInfo.ThisArg with
             | Some(thisArg) ->
@@ -1715,18 +1899,22 @@ module Util =
             | statements -> Rust.Stmt.ifStatement(guardExpr, thenStmnt, Statement.blockStatement(statements), ?loc=r)
             |> Array.singleton
 *)
-    let mutableGet (com: IRustCompiler) ctx range typ expr =
+    let mutableGet (com: IRustCompiler) ctx expr =
         // mkMethodCallExpr "get" None expr [] // only works on copy types
         makeLibCall com ctx "Native" "cellGet" [mkAddrOfExpr expr]
 
     let transformGet (com: IRustCompiler) ctx range typ (fableExpr: Fable.Expr) kind =
         match kind with
         | Fable.ExprGet idx ->
-            let expr = com.TransformAsExpr(ctx, fableExpr)
-            let prop = transformExprMaybeUnwrapRef com ctx idx
+            let prop =
+                let ctx = ctx |> ContextHelper.withRawTypeGuide
+                transformExprMaybeUnwrapRef com ctx idx
             match fableExpr.Type, idx.Type with
             | Fable.Array t, Fable.Number(Int32, None) ->
                 // when indexing an array, cast index to usize
+                let expr =
+                    let ctx = ctx |> ContextHelper.withRawTypeGuide
+                    com.TransformAsExpr(ctx, fableExpr)
                 let prop =
                     match idx with
                     | Fable.Value (Fable.NumberConstant _, _) ->
@@ -1734,9 +1922,18 @@ module Util =
                     | _ ->
                         let uintTy = primitiveType "usize"
                         mkCastExpr uintTy prop
-                getExpr range expr prop
-                |> mutableGet com ctx range t
+                let expr = getExpr range expr prop
+                            |> mutableGet com ctx
+                let attrs: ScopedVarAttrs = {
+                    HasMultipleUses = true;
+                    IsArm = false
+                    IsCellWrapped = hackyInferIfCellWrappedFromExpr fableExpr//isMutable
+                    IsRef = false
+                    IsRefCountWrapped = shouldBeRefCountWrapped com t
+                }
+                postTransformFitToGuide com ctx false (attrs, t, fableExpr, expr)
             | _ ->
+                let expr = com.TransformAsExpr(ctx, fableExpr)
                 getExpr range expr prop
 
         | Fable.FieldGet(fieldName, isMutable) ->
@@ -1746,12 +1943,22 @@ module Util =
                 let idx = fields |> Array.findIndex (fun f -> f = fieldName)
                 (Fable.TupleIndex (idx))
                 |> transformGet com ctx range typ fableExpr
-            | _ ->
+            | t ->
+                // let guide = { ExpectsRef = }
+                // let ctx = {ctx with Typegen = {ctx.Typegen with TypeGuide = {}}}
                 let expr = com.TransformAsExpr(ctx, fableExpr)
                 let field = getField range expr fieldName
-                if isMutable
-                then mutableGet com ctx range typ field
-                else field
+                let attrs: ScopedVarAttrs = {
+                    HasMultipleUses = true;
+                    IsArm = false
+                    IsCellWrapped = isMutable
+                    IsRef = false
+                    IsRefCountWrapped = shouldBeRefCountWrapped com t
+                }
+                postTransformFitToGuide com ctx false (attrs, t, fableExpr, field)
+                // if isMutable
+                // then mutableGet com ctx field
+                // else field
 
         | Fable.ListHead ->
             // get range (com.TransformAsExpr(ctx, fableExpr)) "head"
@@ -1830,10 +2037,11 @@ module Util =
         mkMethodCallExpr "set" None expr [value]
 
     let transformSet (com: IRustCompiler) ctx range fableExpr typ (value: Fable.Expr) kind =
-        let expr = com.TransformAsExpr(ctx, fableExpr)
-        let value = com.TransformAsExpr(ctx, value)
+        let valueType = value.Type
         match kind with
         | Fable.ValueSet ->
+            let expr = com.TransformAsExpr(ctx, fableExpr)
+            let value = com.TransformAsExpr(ctx, value)
             match fableExpr with
             | Fable.IdentExpr id when id.IsMutable ->
                 transformIdentSet com ctx range id value
@@ -1851,15 +2059,41 @@ module Util =
                     | _ ->
                         let uintTy = primitiveType "usize"
                         mkCastExpr uintTy prop
+                let expr = com.TransformAsExpr(ctx, fableExpr)
+                let guide: TypeGuide = {    ExpectsRef = false
+                                            ExpectsCellWrapped = false
+                                            ExpectsRefCountWrapped = false }
+                let ctx = ctx |> ContextHelper.withTypeGuide guide
+
                 let left = getExpr range expr prop
+                let value = com.TransformAsExpr(ctx, value)
+
                 mutableSet com ctx range typ left value
             | _ ->
+                let expr = com.TransformAsExpr(ctx, fableExpr)
+                let value = com.TransformAsExpr(ctx, value)
                 let left = getExpr range expr prop
                 mkAssignExpr left value //?loc=range)
         | Fable.FieldSet(fieldName) ->
+
+            let guide: TypeGuide = {    ExpectsRef = false
+                                        ExpectsCellWrapped = false//if its being set, it is presumably mutable, but we want to set it wiht the unwrapped construct
+                                        ExpectsRefCountWrapped = shouldBeRefCountWrapped com valueType }
+            let ctx = ctx |> ContextHelper.withTypeGuide guide
+            let value = com.TransformAsExpr(ctx, value)
+            let expr = com.TransformAsExpr(ctx, fableExpr)
             let field = getField None expr fieldName
             mutableSet com ctx range typ field value
 
+    let transformAsStmts (com: IRustCompiler) ctx (e: Fable.Expr list) =
+        match e |> List.rev with
+        | returnStmt::rest ->
+            let returnStmt =
+                transformLeaveContextByValue com ctx (Some returnStmt.Type) None returnStmt
+                |> mkExprStmt
+            let rest = rest |> List.map (transformAsStmt com ctx)
+            returnStmt::rest |> List.rev
+        | _ -> []
     let transformAsStmt (com: IRustCompiler) ctx (e: Fable.Expr): Rust.Stmt =
         let expr = com.TransformAsExpr(ctx, e)
         mkExprStmt expr
@@ -1879,51 +2113,49 @@ module Util =
         | _ -> [expr]
 
     let transformLet (com: IRustCompiler) ctx bindings body =
-        let usages =
-            let bodyUsages = calcIdentUsages body
+        let usages, mutUsages =
+            let bodyUsages, bodyMutUsages = calcIdentUsages body
             let bindingsUsages = bindings |> List.map (snd >> calcIdentUsages)
-            (Map.empty, bodyUsages::bindingsUsages)
-            ||> List.fold (Helpers.Map.mergeAndAggregate (+))
+            ((Map.empty, Map.empty), (bodyUsages, bodyMutUsages)::bindingsUsages)
+            ||> List.fold (fun (acc, accMut) (usages, mutUsages) ->
+                Helpers.Map.mergeAndAggregate (+) acc usages, Helpers.Map.mergeAndAggregate (+) accMut mutUsages)
 
         let makeLetStmt ctx (ident: Fable.Ident, value: Fable.Expr) =
             let isRef = false
-            let isMut = false
+            let isMut = false//ident.IsMutable
             let pat = mkIdentPat ident.Name isRef isMut
+            let expectedScopedVarAttrs = { //this is being used as the input to the type guide, which is WRONG
+                IsArm = false
+                IsRef = isRef
+                IsCellWrapped = ident.IsMutable
+                IsRefCountWrapped = shouldBeRefCountWrapped com ident.Type// || ident.IsMutable // todo - scanForOwnership etc
+                HasMultipleUses = hasMultipleUses ident.Name usages
+            }
+            let typeGuide = Some {  ExpectsRefCountWrapped = expectedScopedVarAttrs.IsRefCountWrapped
+                                    ExpectsCellWrapped = expectedScopedVarAttrs.IsCellWrapped
+                                    ExpectsRef = isRef; }
+            let typegen = { FavourClosureTraitOverFunctionPointer = true
+                            IsParamType = false
+                            TakingOwnership = true
+                            IsRawType = false
+                            TypeGuide = typeGuide }
             let tyOpt =
                 match ident.Type with
                 | Fable.LambdaType _
                 | Fable.DelegateType _ -> None
                 | Fable.Any -> None
                 | _ ->
-                    let typegen = { FavourClosureTraitOverFunctionPointer = true
-                                    IsParamType = false
-                                    TakingOwnership = true
-                                    IsRawType = false }
                     let ctx = { ctx with Typegen = typegen }
                     transformType com ctx ident.Type
                     |> Some
-            let tyOpt =
-                tyOpt |> Option.map (fun ty ->
-                    if ident.IsMutable
-                    then ty |> makeMutTy com ctx ident.Type
-                    else ty)
-            let init =
-                transformLeaveContextByValue com ctx (Some ident.Type) (Some ident.Name) value
             let expr =
-                if ident.IsMutable
-                then init |> makeMutValue com ident.Type
-                else init
+                let ctx = ContextHelper.withTypegen typegen ctx
+                transformLeaveContextByValue com ctx (Some ident.Type) (None) value
+            let ctx = { ctx with ScopedSymbols = ctx.ScopedSymbols |> Map.add ident.Name expectedScopedVarAttrs}
             let local = mkLocal [] pat tyOpt (Some expr)
             // TODO : traverse body and follow references to decide on if this should be wrapped or not]
-            let scopedVarAttrs = {
-                IsArm = false
-                IsRef = isRef
-                IsMutable = isMut
-                IsRefCountWrapped = shouldBeRefCountWrapped com ident.Type
-                HasMultipleUses = hasMultipleUses ident.Name usages
-            }
-            let ctxNext = { ctx with ScopedSymbols = ctx.ScopedSymbols |> Map.add ident.Name scopedVarAttrs }
-            mkLocalStmt local, ctxNext
+
+            mkLocalStmt local, ctx
         let ctx, letStmtsRev = //Context needs to be threaded through all lets, appending itself to ScopedSymbols each time
             ((ctx, []), bindings)
             ||> List.fold (fun (ctx, lst) (ident, expr) ->
@@ -1936,14 +2168,14 @@ module Util =
             match body with
             | Fable.Sequential exprs ->
                 let exprs = flattenSequential body
-                List.map (transformAsStmt com ctx) exprs
+                transformAsStmts com ctx exprs
             | _ ->
-                [transformAsStmt com ctx body]
+                transformAsStmts com ctx [body]
         (letStmts @ bodyStmts) |> mkBlock |> mkBlockExpr
 
     let transformSequential (com: IRustCompiler) ctx exprs =
         exprs
-        |> List.map (transformAsStmt com ctx)
+        |> transformAsStmts com ctx
         |> mkBlock
         |> mkBlockExpr
 
@@ -1987,7 +2219,6 @@ module Util =
 
     let transformCurriedApply (com: IRustCompiler) ctx range expr args =
         let callee = com.TransformAsExpr(ctx, expr)
-        let ctx = { ctx with Typegen = { ctx.Typegen with TakingOwnership = false}}
         callFunction com ctx range callee args
         // let handler =
         //     catch |> Option.map (fun (param, body) ->
@@ -2102,7 +2333,7 @@ module Util =
             // TODO: vars, boundValues
             let body =
                 //com.TransformAsExpr(ctx, bodyExpr)
-                let usages = calcIdentUsages bodyExpr
+                let usages, mutUsages = calcIdentUsages bodyExpr
 
                 let symbolsAndNames =
                     let fromIdents =
@@ -2110,8 +2341,8 @@ module Util =
                         |> List.map(fun id ->
                             id.Name, {  IsArm = true
                                         IsRef = true
-                                        IsMutable = id.IsMutable
-                                        IsRefCountWrapped = shouldBeRefCountWrapped com id.Type
+                                        IsCellWrapped = id.IsMutable
+                                        IsRefCountWrapped = shouldBeRefCountWrapped com id.Type// || id.IsMutable
                                         HasMultipleUses = hasMultipleUses id.Name usages })
 
                     let fromExtra =
@@ -2119,7 +2350,7 @@ module Util =
                         |> List.map (fun (name, friendlyName, t) ->
                             friendlyName, { IsArm = true
                                             IsRef = true
-                                            IsMutable = false
+                                            IsCellWrapped = false
                                             IsRefCountWrapped = shouldBeRefCountWrapped com t
                                             HasMultipleUses = hasMultipleUses friendlyName usages })
                     fromIdents @ fromExtra
@@ -2469,7 +2700,9 @@ module Util =
 
         | Fable.Value(kind, r) -> transformValue com ctx r kind
 
-        | Fable.IdentExpr id -> transformIdentGet com ctx None id // TODO: range
+        | Fable.IdentExpr id ->
+            transformIdent com ctx None id
+            //transformIdentGet com ctx None id // TODO: range
 
         | Fable.Import({ Selector = selector; Path = path }, _, r) ->
             makeImport com ctx r selector path
@@ -2898,7 +3131,8 @@ module Util =
         let typegen = { FavourClosureTraitOverFunctionPointer = true
                         IsParamType = true
                         TakingOwnership = false
-                        IsRawType = false }
+                        IsRawType = false
+                        TypeGuide = None }
         let ctx = { ctx with Typegen = typegen }
         let ty = transformParamType com ctx ident.Type
         let isRef = false
@@ -2932,26 +3166,32 @@ module Util =
         let fnDecl = transformFunctionDecl com ctx args body.Type
         let ctx =
             let scopedSymbols =
-                let usages = calcIdentUsages body
+                let usages, mutUsages = calcIdentUsages body
                 (ctx.ScopedSymbols, args)
                 ||> List.fold (fun acc arg ->
                     //todo optimizations go here
                     let scopedVarAttrs = {
                         IsArm = false
                         IsRef = shouldBePassByRefForParam com arg.Type
-                        IsMutable = arg.IsMutable
-                        IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
+                        IsCellWrapped = arg.IsMutable
+                        IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type// || arg.IsMutable
                         HasMultipleUses = hasMultipleUses arg.Name usages
                     }
                     acc |> Map.add arg.Name scopedVarAttrs)
             { ctx with ScopedSymbols = scopedSymbols }
+        let guide = {
+            ExpectsCellWrapped = false
+            ExpectsRef = false
+            ExpectsRefCountWrapped = shouldBeRefCountWrapped com body.Type
+        }
+        let ctx = ctx |> ContextHelper.withTypeGuide guide
         let fnBody = transformLeaveContextByValue com ctx None None body
         fnDecl, fnBody, newTypeParams
 
     let transformLambda (com: IRustCompiler) ctx (args: Fable.Ident list) (body: Fable.Expr) =
         let fnDecl = transformFunctionDecl com ctx args Fable.Unit
         let ctx =
-            let usages = calcIdentUsages body
+            let usages, mutUsages = calcIdentUsages body
             let scopedSymbols =
                 (ctx.ScopedSymbols, args)
                 ||> List.fold (fun acc arg ->
@@ -2959,19 +3199,20 @@ module Util =
                     let scopedVarAttrs = {
                         IsArm = false
                         IsRef = shouldBePassByRefForParam com arg.Type
-                        IsMutable = arg.IsMutable
-                        IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
+                        IsCellWrapped = arg.IsMutable
+                        IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type// || arg.IsMutable
                         HasMultipleUses = hasMultipleUses arg.Name usages
                         }
                     acc |> Map.add arg.Name scopedVarAttrs)
-            { ctx with ScopedSymbols = scopedSymbols }
+            { ctx with ScopedSymbols = scopedSymbols} |> ContextHelper.withNoTypeGuide
         let fnBody = transformLeaveContextByValue com ctx None None body
         let closedOverCloneableNames =
             let paramNamesToExclude = args |> List.map (fun arg -> arg.Name) |> Set.ofList
             let mutable names:ResizeArray<string> = ResizeArray()
             FableTransforms.deepExists
                 (function | Fable.Expr.IdentExpr ident ->
-                                if shouldBeRefCountWrapped com ident.Type && not (Set.contains ident.Name paramNamesToExclude) then
+                                let varAttrs = tryGetCtxForSymbol com ctx ident.Type ident.Name
+                                if varAttrs.IsRefCountWrapped && not (Set.contains ident.Name paramNamesToExclude) then
                                     names.Add(ident.Name)
                                 else
                                     match ident.Type with
@@ -3565,7 +3806,8 @@ module Compiler =
             Typegen = { FavourClosureTraitOverFunctionPointer = false
                         IsParamType = false
                         TakingOwnership = false
-                        IsRawType = false} }
+                        IsRawType = false
+                        TypeGuide = None } }
 
         let topAttrs = [
             // TODO: make some of those conditional on compiler options
