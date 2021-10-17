@@ -23,7 +23,6 @@ let ``fn as param should also accept static functions`` () =
     let wRes = w |> map staticFnPassthrough
     wRes.X |> equal 1
 
-
 [<Fact>]
 let ``Closure captures trivial case variable and does not break borrow checker`` () =
     let a = 3
@@ -100,13 +99,11 @@ let ``parameterless closure works - unit type in`` () =
     res1 |> equal "closed.x"
     res2 |> equal "closed.x"
 
-// TODO : Support unit return type
 [<Fact>]
 let ``Mutable capture works`` () =
     let mutable x = 0
     let incrementX () =
         x <- x + 1
-        ()
 
     incrementX()
     x |> equal 1
@@ -124,7 +121,6 @@ let ``Capture works with type with interior mutability`` () =
     let x = { MutValue = 0 }
     let incrementX () =
         x.MutValue <- x.MutValue + 1
-        0// TODO : support unit
 
     incrementX()
     x.MutValue |> equal 1
