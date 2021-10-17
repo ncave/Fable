@@ -40,9 +40,9 @@ type TypegenContext = {
 
 type ScopedVarAttrs = {
     IsArm: bool
-    IsMutable: bool
+    // IsMutable: bool
     IsRef: bool
-    IsRefCountWrapped: bool
+    // IsRefCountWrapped: bool
     HasMultipleUses: bool
 }
 
@@ -1424,8 +1424,8 @@ module Util =
             |> Option.defaultValue {
                 IsArm = false
                 IsRef = false
-                IsRefCountWrapped = shouldBeRefCountWrapped com t
-                IsMutable = false
+                // IsRefCountWrapped = shouldBeRefCountWrapped com t
+                // IsMutable = false
                 HasMultipleUses = true }
         let isOnlyReference =
             if varAttrs.IsRef then false
@@ -1467,7 +1467,7 @@ module Util =
         let t = t |> Option.defaultValue e.Type
         let varAttrs, isOnlyReference = calcVarAttrsAndOnlyRef com ctx t name e
 
-        if varAttrs.IsRefCountWrapped && not isOnlyReference then
+        if shouldBeRefCountWrapped com t && not isOnlyReference then
             makeClone expr
         elif isCloneable com t e && not isOnlyReference then
             makeClone expr // shouldn't really be using a rchelper as this is NOT an rc
@@ -1918,8 +1918,8 @@ module Util =
             let scopedVarAttrs = {
                 IsArm = false
                 IsRef = isRef
-                IsMutable = isMut
-                IsRefCountWrapped = shouldBeRefCountWrapped com ident.Type
+                // IsMutable = isMut
+                // IsRefCountWrapped = shouldBeRefCountWrapped com ident.Type
                 HasMultipleUses = hasMultipleUses ident.Name usages
             }
             let ctxNext = { ctx with ScopedSymbols = ctx.ScopedSymbols |> Map.add ident.Name scopedVarAttrs }
@@ -2110,8 +2110,8 @@ module Util =
                         |> List.map(fun id ->
                             id.Name, {  IsArm = true
                                         IsRef = true
-                                        IsMutable = id.IsMutable
-                                        IsRefCountWrapped = shouldBeRefCountWrapped com id.Type
+                                        // IsMutable = id.IsMutable
+                                        // IsRefCountWrapped = shouldBeRefCountWrapped com id.Type
                                         HasMultipleUses = hasMultipleUses id.Name usages })
 
                     let fromExtra =
@@ -2119,8 +2119,8 @@ module Util =
                         |> List.map (fun (name, friendlyName, t) ->
                             friendlyName, { IsArm = true
                                             IsRef = true
-                                            IsMutable = false
-                                            IsRefCountWrapped = shouldBeRefCountWrapped com t
+                                            // IsMutable = false
+                                            // IsRefCountWrapped = shouldBeRefCountWrapped com t
                                             HasMultipleUses = hasMultipleUses friendlyName usages })
                     fromIdents @ fromExtra
                 let scopedSymbolsNext =
@@ -2940,8 +2940,8 @@ module Util =
                     let scopedVarAttrs = {
                         IsArm = false
                         IsRef = shouldBePassByRefForParam com arg.Type
-                        IsMutable = arg.IsMutable
-                        IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
+                        // IsMutable = arg.IsMutable
+                        // IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
                         HasMultipleUses = hasMultipleUses arg.Name usages
                     }
                     acc |> Map.add arg.Name scopedVarAttrs)
@@ -2960,8 +2960,8 @@ module Util =
                     let scopedVarAttrs = {
                         IsArm = false
                         IsRef = shouldBePassByRefForParam com arg.Type
-                        IsMutable = arg.IsMutable
-                        IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
+                        // IsMutable = arg.IsMutable
+                        // IsRefCountWrapped = shouldBeRefCountWrapped com arg.Type
                         HasMultipleUses = hasMultipleUses arg.Name usages
                         }
                     acc |> Map.add arg.Name scopedVarAttrs)
