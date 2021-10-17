@@ -2524,7 +2524,8 @@ module Util =
             // else iife com ctx expr
 
         // | Fable.LetRec(bindings, body) ->
-        //     if ctx.HoistVars(List.map fst bindings) then
+        //     let idents = List.map fst bindings
+        //     if ctx.HoistVars(idents) then
         //         let values = bindings |> List.mapToArray (fun (id, value) ->
         //             transformBindingAsExpr com ctx id value)
         //         Expression.sequenceExpression(Array.append values [|com.TransformAsExpr(ctx, body)|])
@@ -2966,40 +2967,41 @@ module Util =
                     acc |> Map.add arg.Name scopedVarAttrs)
             { ctx with ScopedSymbols = scopedSymbols }
         let fnBody = transformLeaveContextByValue com ctx None None body
-        let closedOverCloneableNames =
-            let paramNamesToExclude = args |> List.map (fun arg -> arg.Name) |> Set.ofList
-            let mutable names:ResizeArray<string> = ResizeArray()
-            FableTransforms.deepExists
-                (function | Fable.Expr.IdentExpr ident ->
-                                if shouldBeRefCountWrapped com ident.Type && not (Set.contains ident.Name paramNamesToExclude) then
-                                    names.Add(ident.Name)
-                                else
-                                    match ident.Type with
-                                    | Fable.LambdaType _
-                                    | Fable.DelegateType _ ->
-                                        //Closures may capture Ref counted vars, so by cloning the actual closure, you inadvertently clone all attached ref counted vars
-                                        names.Add(ident.Name)
-                                    | _ -> ()
-                                    ()
-                                false
-                          | _ -> false) body
-                |> ignore
-            names
-            |> Seq.toList
-            |> List.distinct //there seem to be duplicates in some contexts?
-        let closureExpr = mkClosureExpr fnDecl fnBody
-        if closedOverCloneableNames.Length > 0 then
-            mkBlockExpr (mkBlock [
-                for name in closedOverCloneableNames do
-                    let pat = mkIdentPat (name) false false
-                    let identExpr = com.TransformAsExpr(ctx, makeIdentExpr name)
-                    let nexpr = makeClone identExpr
-                    let letExpr = mkLetExpr pat nexpr
-                    yield letExpr |> Rust.AST.Types.StmtKind.Semi |> mkStmt
+        // let closedOverCloneableNames =
+        //     let paramNamesToExclude = args |> List.map (fun arg -> arg.Name) |> Set.ofList
+        //     let mutable names:ResizeArray<string> = ResizeArray()
+        //     FableTransforms.deepExists
+        //         (function | Fable.Expr.IdentExpr ident ->
+        //                         if shouldBeRefCountWrapped com ident.Type && not (Set.contains ident.Name paramNamesToExclude) then
+        //                             names.Add(ident.Name)
+        //                         else
+        //                             match ident.Type with
+        //                             | Fable.LambdaType _
+        //                             | Fable.DelegateType _ ->
+        //                                 //Closures may capture Ref counted vars, so by cloning the actual closure, you inadvertently clone all attached ref counted vars
+        //                                 names.Add(ident.Name)
+        //                             | _ -> ()
+        //                             ()
+        //                         false
+        //                   | _ -> false) body
+        //         |> ignore
+        //     names
+        //     |> Seq.toList
+        //     |> List.distinct //there seem to be duplicates in some contexts?
+        // let closureExpr = mkClosureExpr fnDecl fnBody
+        // if closedOverCloneableNames.Length > 0 then
+        //     mkBlockExpr (mkBlock [
+        //         for name in closedOverCloneableNames do
+        //             let pat = mkIdentPat (name) false false
+        //             let identExpr = com.TransformAsExpr(ctx, makeIdentExpr name)
+        //             let nexpr = makeClone identExpr
+        //             let letExpr = mkLetExpr pat nexpr
+        //             yield letExpr |> Rust.AST.Types.StmtKind.Semi |> mkStmt
 
-                yield closureExpr |> Rust.AST.Types.StmtKind.Expr |> mkStmt
-            ])
-        else closureExpr
+        //         yield closureExpr |> Rust.AST.Types.StmtKind.Expr |> mkStmt
+        //     ])
+        // else closureExpr
+        mkClosureExpr fnDecl fnBody
 
     // // Really crude way to determine if a generic type should be mutable,
     // // basically just checks if the generic arg is inside a generic array.

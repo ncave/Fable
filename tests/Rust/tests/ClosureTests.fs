@@ -100,21 +100,20 @@ let ``parameterless closure works - unit type in`` () =
     res1 |> equal "closed.x"
     res2 |> equal "closed.x"
 
-// TODO : mutable x probably needs to be a Arc<RefCell<T>>?
 // TODO : Support unit return type
-// [<Fact>]
-// let ``Mutable capture works`` () =
-//     let mutable x = 0
-//     let incrementX () =
-//         x <- x + 1
-//         ()
+[<Fact>]
+let ``Mutable capture works`` () =
+    let mutable x = 0
+    let incrementX () =
+        x <- x + 1
+        ()
 
-//     incrementX()
-//     x |> equal 1
-//     incrementX()
-//     x |> equal 2
-//     incrementX()
-//     x |> equal 3
+    incrementX()
+    x |> equal 1
+    incrementX()
+    x |> equal 2
+    incrementX()
+    x |> equal 3
 
 type MutWrapped = {
     mutable MutValue: int
