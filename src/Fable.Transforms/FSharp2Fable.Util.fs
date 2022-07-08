@@ -516,9 +516,15 @@ module Helpers =
                         moduleName, Naming.StaticMemberPart(memb.CompiledName, "")
                 else
                     let overloadSuffix = getOverloadSuffixFrom ent memb
-                    if memb.IsInstanceMember
-                    then entName, Naming.InstanceMemberPart(memb.CompiledName, overloadSuffix)
-                    else entName, Naming.StaticMemberPart(memb.CompiledName, overloadSuffix)
+                    if memb.IsInstanceMember then
+                        entName, Naming.InstanceMemberPart(memb.CompiledName, overloadSuffix)
+                    else
+                        match trimRootModule, hasAttribute Atts.emitAttr ent.Attributes with
+                        | TrimRootModule com, true when com.Options.Language = Rust ->
+                            // Rust - no overload suffix for static methods on emitted types
+                            entName, Naming.StaticMemberPart(memb.CompiledName, "")
+                        | _ ->
+                            entName, Naming.StaticMemberPart(memb.CompiledName, overloadSuffix)
             | None -> memb.CompiledName, Naming.NoMemberPart
 
     /// Returns the sanitized name for the member declaration and whether it has an overload suffix
@@ -619,6 +625,19 @@ module Helpers =
         match tryDefinition typ with
         | Some(_, Some fullName) -> fullName
         | _ -> Naming.unknown
+
+    let getEntityFullName (com: Compiler) (ent: FSharpEntity) =
+        match tryFindAtt Atts.emitAttr ent.Attributes with
+        | Some att when com.Options.Language = Rust ->
+            // Rust - get entity name from the Emit attribute
+            let name = tryAttributeConsArg att 0 "" tryString
+            "r#" + name // emitted names are treated as raw idents
+        | _ -> ent.FullName
+
+    let isErasedEntityMember (com: Compiler) (memb: FSharpMemberOrFunctionOrValue) =
+        match com.Options.Language, memb.DeclaringEntity with
+        | Rust, Some ent -> hasAttribute Atts.erase ent.Attributes
+        | _ -> false
 
     let isInline (memb: FSharpMemberOrFunctionOrValue) =
         match memb.InlineAnnotation with
@@ -1857,7 +1876,8 @@ module Util =
             match com.Options.Language, memb.DeclaringEntity with
             // for Rust use full name with non-instance calls
             | Rust, Some ent when not(memb.IsInstanceMember) ->
-                ent.FullName + "." + memberName
+                let entFullName = getEntityFullName com ent
+                entFullName + "." + memberName
             | _ -> memberName
         let file =
             memb.DeclaringEntity
@@ -1867,7 +1887,9 @@ module Util =
             |> Option.defaultValue com.CurrentFile
 
         // If precompiling inline function always reference with Import and not as IdentExpr
-        if not com.IsPrecompilingInlineFunction && file = com.CurrentFile then
+        if not com.IsPrecompilingInlineFunction &&
+            (file = com.CurrentFile || isErasedEntityMember com memb)
+        then
             { makeTypedIdent typ memberName with Range = r; IsMutable = memb.IsMutable }
             |> Fable.IdentExpr
         else

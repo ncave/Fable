@@ -627,9 +627,11 @@ module TypeInfo =
                 | [:? string as macro] -> Some macro
                 | _ -> None
             else None)
+
     type PointerType =
         | Rc
         | Arc
+
     let (|HasReferenceTypeAttribute|_|) (ent: Fable.Entity) =
         ent.Attributes |> Seq.tryPick (fun att ->
             if att.Entity.FullName.StartsWith(Atts.refType) then

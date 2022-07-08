@@ -51,11 +51,13 @@ module Performance =
     type Duration =
         abstract as_millis: unit -> uint64 // actually u128
         abstract as_secs_f64: unit -> float
+        static member from_secs(secs: uint64): Duration = nativeOnly
 
     [<Erase; Emit("std::time::Instant")>]
     type Instant =
         abstract duration_since: Instant -> Duration
         abstract elapsed: unit -> Duration
+        static member now(): Instant = nativeOnly
 
     [<Emit("std::time::Instant::now()")>]
     let now(): Instant = nativeOnly
