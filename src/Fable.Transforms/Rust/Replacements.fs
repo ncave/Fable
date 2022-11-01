@@ -1606,7 +1606,7 @@ let resizeArrays (com: ICompiler) (ctx: Context) r (t: Type) (i: CallInfo) (this
         // can't use .sort() as it needs T: Ord
         Helper.LibCall(com, "Array", "sortInPlace", t, [ar], i.SignatureArgTypes, ?loc=r) |> Some
     | "Sort", Some ar, [ExprType(DelegateType _) as comparer] ->
-        let cmp = Helper.LibCall(com, "Native", "comparer", t, [comparer], ?loc=r)
+        let cmp = Helper.LibCall(com, "Native", "comparer", t, [makeRef comparer], ?loc=r)
         makeInstanceCall r t i (getMut ar) "sort_by" [cmp] |> Some
     // | "Sort", Some ar, [arg] ->
     //     Helper.LibCall(com, "Array", "sortInPlaceWithComparer", t, [ar; arg], i.SignatureArgTypes, ?loc=r) |> Some
@@ -1671,7 +1671,7 @@ let arrays (com: ICompiler) (ctx: Context) r (t: Type) (i: CallInfo) (thisArg: E
         // can't use .sort() as it needs T: Ord
         Helper.LibCall(com, "Array", "sortInPlace", t, [ar], i.SignatureArgTypes, ?loc=r) |> Some
     | "Sort", None, [ar; ExprType(DelegateType _) as comparer] ->
-        let cmp = Helper.LibCall(com, "Native", "comparer", t, [comparer], ?loc=r)
+        let cmp = Helper.LibCall(com, "Native", "comparer", t, [makeRef comparer], ?loc=r)
         makeInstanceCall r t i (getMut ar) "sort_by" [cmp] |> Some
     // | "Sort", None, [ar; arg] ->
     //     Helper.LibCall(com, "Array", "sortInPlaceWithComparer", t, [ar; arg], i.SignatureArgTypes, ?loc=r) |> Some

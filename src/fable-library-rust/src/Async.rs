@@ -180,7 +180,7 @@ pub mod Monitor_ {
     }
 
     // Not technically part of monitor, but it needs to be behind a feature switch, so cannot just dump this in Native
-    pub fn lock<T: Clone + Send + Sync, U>(toLock: Arc<T>, f: Lrc<impl Fn() -> U>) -> U {
+    pub fn lock<T: Clone + Send + Sync, U>(toLock: Arc<T>, f: impl Fn() -> U) -> U {
         enter(&toLock);
         let returnVal = f();
         // panics will bypass this - need some finally mechanism
@@ -423,7 +423,7 @@ pub mod Thread_ {
     }
     pub struct Thread (MutCell<ThreadInt>);
 
-    pub fn new(f: Lrc<impl Fn() -> () + Send + Sync + 'static>) -> Lrc<Thread> {
+    pub fn new(f: impl Fn() -> () + Send + Sync + 'static) -> Lrc<Thread> {
         Lrc::from(Thread (MutCell::from(ThreadInt::New(f))))
     }
 

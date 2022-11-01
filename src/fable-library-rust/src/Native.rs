@@ -60,7 +60,7 @@ pub mod Native_ {
         core::ptr::eq(left, right)
     }
 
-    pub fn comparer<T: Clone>(comp: Lrc<impl Fn(T, T) -> i32>) -> impl Fn(&T, &T) -> Ordering {
+    pub fn comparer<T: Clone>(comp: impl Fn(T, T) -> i32) -> impl Fn(&T, &T) -> Ordering {
         move |x, y| match comp(x.clone(), y.clone()) {
             i if i < 0 => Ordering::Less,
             i if i > 0 => Ordering::Greater,
@@ -177,12 +177,12 @@ pub mod Native_ {
     pub fn iter_to_seq<T, I>(iter: I) -> seq<T>
     where
         T: Clone + 'static,
-        I: Iterator<Item = T> + 'static,
+        I: Iterator<Item = T> + Clone + 'static,
     {
         let iter = mkMut(iter);
-        let f = mkRef(move || iter.get_mut().next());
+        let f = (move || iter.get_mut().next());
         let en = crate::Seq_::Enumerable::fromFunction(f);
-        crate::Seq_::mkSeq(mkRef(move || en.clone()))
+        crate::Seq_::mkSeq((move || en.clone()))
     }
 
 }

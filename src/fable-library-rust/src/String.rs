@@ -577,42 +577,42 @@ pub mod String_ {
     // String module
     // -----------------------------------------------------------
 
-    pub fn collect(mapping: Lrc<impl Fn(char) -> string>, s: string) -> string {
+    pub fn collect(mapping: impl Fn(char) -> string, s: string) -> string {
         let v: Vec<string> = s.chars().map(|c| mapping(c)).collect();
         fromIter(v.iter().flat_map(|s| s.chars()))
     }
 
-    pub fn exists(predicate: Lrc<impl Fn(char) -> bool>, s: string) -> bool {
+    pub fn exists(predicate: impl Fn(char) -> bool, s: string) -> bool {
         s.chars().any(|c| predicate(c))
     }
 
-    pub fn filter(predicate: Lrc<impl Fn(char) -> bool>, s: string) -> string {
+    pub fn filter(predicate: impl Fn(char) -> bool, s: string) -> string {
         fromIter(s.chars().filter(|c| predicate(*c)))
     }
 
-    pub fn forAll(predicate: Lrc<impl Fn(char) -> bool>, s: string) -> bool {
+    pub fn forAll(predicate: impl Fn(char) -> bool, s: string) -> bool {
         s.chars().all(|c| predicate(c))
     }
 
-    pub fn init(count: i32, initializer: Lrc<impl Fn(i32) -> string>) -> string {
+    pub fn init(count: i32, initializer: impl Fn(i32) -> string) -> string {
         let v: Vec<string> = (0..count).map(|i| initializer(i)).collect();
         fromIter(v.iter().flat_map(|s| s.chars()))
     }
 
-    pub fn iter(action: Lrc<impl Fn(char) -> ()>, s: string) -> () {
+    pub fn iter(action: impl Fn(char) -> (), s: string) -> () {
         s.chars().for_each(|c| action(c))
     }
 
-    pub fn iteri(action: Lrc<impl Fn(i32, char) -> ()>, s: string) -> () {
+    pub fn iteri(action: impl Fn(i32, char) -> (), s: string) -> () {
         let mut i: i32 = -1;
         s.chars().for_each(|c| { i += 1; action(i, c) })
     }
 
-    pub fn map(mapping: Lrc<impl Fn(char) -> char>, s: string) -> string {
+    pub fn map(mapping: impl Fn(char) -> char, s: string) -> string {
         fromIter(s.chars().map(|c| mapping(c)))
     }
 
-    pub fn mapi(mapping: Lrc<impl Fn(i32, char) -> char>, s: string) -> string {
+    pub fn mapi(mapping: impl Fn(i32, char) -> char, s: string) -> string {
         fromIter(s.chars().enumerate().map(|(i, c)| mapping(i as i32, c)))
     }
 
