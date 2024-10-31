@@ -327,7 +327,7 @@ module JS =
 
         abstract forEach: callbackfn: ('V -> 'K -> Map<'K, 'V> -> unit) * ?thisArg: obj -> unit
 
-        abstract get: key: 'K -> 'V
+        abstract get: key: 'K -> 'V option
         abstract has: key: 'K -> bool
         abstract keys: unit -> seq<'K>
         abstract set: key: 'K * value: 'V -> Map<'K, 'V>

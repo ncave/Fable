@@ -9,7 +9,7 @@ open Native
 type MutableSet<'T when 'T: equality>(items: 'T seq, comparer: IEqualityComparer<'T>) as this =
 
     // Compiles to JS Map of key hashes pointing to dynamic arrays of 'T.
-    let hashMap = Dictionary<int, ResizeArray<'T>>()
+    let hashMap = NativeMap<int, ResizeArray<'T>>(Seq.empty)
 
     do
         for item in items do
@@ -18,16 +18,16 @@ type MutableSet<'T when 'T: equality>(items: 'T seq, comparer: IEqualityComparer
     // new () = MutableSet (Seq.empty, EqualityComparer.Default)
     // new (comparer) = MutableSet (Seq.empty, comparer)
 
-    member private this.TryFindIndex(k) =
+    member private _.TryFindIndex(k) =
         let h = comparer.GetHashCode(k)
 
-        match hashMap.TryGetValue h with
-        | true, values -> true, h, values.FindIndex(fun v -> comparer.Equals(k, v))
-        | false, _ -> false, h, -1
+        match hashMap.TryFind h with
+        | Some values -> true, h, values.FindIndex(fun v -> comparer.Equals(k, v))
+        | None -> false, h, -1
 
-    member private this.TryFind(k) =
+    member this.TryFind(k) =
         match this.TryFindIndex(k) with
-        | true, h, i when i > -1 -> Some hashMap.[h].[i]
+        | true, h, i when i > -1 -> Some(hashMap.[h].[i])
         | _, _, _ -> None
 
     member this.Comparer = comparer

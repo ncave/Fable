@@ -11,7 +11,7 @@ type MutableMap<'Key, 'Value when 'Key: equality>
     as this =
 
     // Compiles to JS Map of key hashes pointing to dynamic arrays of KeyValuePair<'Key, 'Value>.
-    let hashMap = Dictionary<int, ResizeArray<KeyValuePair<'Key, 'Value>>>()
+    let hashMap = NativeMap<int, ResizeArray<KeyValuePair<'Key, 'Value>>>(Seq.empty)
 
     do
         for pair in pairs do
@@ -20,16 +20,16 @@ type MutableMap<'Key, 'Value when 'Key: equality>
     // new () = MutableMap (Seq.empty, EqualityComparer.Default)
     // new (comparer) = MutableMap (Seq.empty, comparer)
 
-    member private this.TryFindIndex(k) =
+    member private _.TryFindIndex(k) =
         let h = comparer.GetHashCode(k)
 
-        match hashMap.TryGetValue h with
-        | true, pairs -> true, h, pairs.FindIndex(fun pair -> comparer.Equals(k, pair.Key))
-        | false, _ -> false, h, -1
+        match hashMap.TryFind h with
+        | Some pairs -> true, h, pairs.FindIndex(fun pair -> comparer.Equals(k, pair.Key))
+        | None -> false, h, -1
 
-    member this.TryFind(k) =
+    member this.TryFind(k: 'Key) : 'Value option =
         match this.TryFindIndex(k) with
-        | true, h, i when i > -1 -> Some hashMap.[h].[i]
+        | true, h, i when i > -1 -> Some(hashMap.[h].[i].Value)
         | _, _, _ -> None
 
     member this.Comparer = comparer
@@ -47,7 +47,7 @@ type MutableMap<'Key, 'Value when 'Key: equality>
     member this.Item
         with get (k: 'Key) =
             match this.TryFind(k) with
-            | Some pair -> pair.Value
+            | Some v -> v
             | _ -> raise (KeyNotFoundException("The item was not found in collection"))
         and set (k: 'Key) (v: 'Value) =
             match this.TryFindIndex(k) with
@@ -102,7 +102,7 @@ type MutableMap<'Key, 'Value when 'Key: equality>
 
         member this.Contains(item: KeyValuePair<'Key, 'Value>) : bool =
             match this.TryFind item.Key with
-            | Some p when Unchecked.equals p.Value item.Value -> true
+            | Some v when Unchecked.equals v item.Value -> true
             | _ -> false
 
         member this.CopyTo(array: KeyValuePair<'Key, 'Value>[], arrayIndex: int) : unit =
@@ -113,8 +113,8 @@ type MutableMap<'Key, 'Value when 'Key: equality>
 
         member this.Remove(item: KeyValuePair<'Key, 'Value>) : bool =
             match this.TryFind item.Key with
-            | Some pair ->
-                if Unchecked.equals pair.Value item.Value then
+            | Some v ->
+                if Unchecked.equals v item.Value then
                     this.Remove(item.Key) |> ignore
 
                 true
@@ -135,8 +135,8 @@ type MutableMap<'Key, 'Value when 'Key: equality>
 
         member this.TryGetValue(key: 'Key, value: byref<'Value>) : bool =
             match this.TryFind key with
-            | Some pair ->
-                value <- pair.Value
+            | Some v ->
+                value <- v
                 true
             | _ -> false
 
@@ -151,7 +151,7 @@ type MutableMap<'Key, 'Value when 'Key: equality>
         member this.entries() =
             this |> Seq.map (fun p -> p.Key, p.Value)
 
-        member this.get(k) = this.[k]
+        member this.get(k) = this.TryFind(k)
         member this.has(k) = this.ContainsKey(k)
         member this.keys() = this |> Seq.map (fun p -> p.Key)
 

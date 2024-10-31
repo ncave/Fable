@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * [Rust] Fixed derived traits mapping (by @ncave)
 
+### Added
+
+* [JS/TS] Added JS Map and Set wrappers (by @ncave)
+
 ## 4.23.0 - 2024-10-28
 
 ### Added

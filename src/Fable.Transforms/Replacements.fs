@@ -648,7 +648,9 @@ let makeDictionary (com: ICompiler) ctx r t sourceSeq =
     | DeclaredType(_, [ key; _ ]) when not (isCompatibleWithNativeComparison key) ->
         // makeComparer com ctx key
         makeEqualityComparer com ctx key |> makeDictionaryWithComparer com r t sourceSeq
-    | _ -> Helper.GlobalCall("Map", t, [ sourceSeq ], isConstructor = true, ?loc = r)
+    | _ ->
+        // Helper.GlobalCall("Map", t, [ sourceSeq ], isConstructor = true, ?loc = r)
+        Helper.LibCall(com, "NativeMap", "Dictionary", t, [ sourceSeq ], isConstructor = true, ?loc = r)
 
 let makeHashSetWithComparer com r t sourceSeq comparer =
     Helper.LibCall(com, "MutableSet", "HashSet", t, [ sourceSeq; comparer ], isConstructor = true, ?loc = r)
@@ -658,7 +660,9 @@ let makeHashSet (com: ICompiler) ctx r t sourceSeq =
     | DeclaredType(_, [ key ]) when not (isCompatibleWithNativeComparison key) ->
         // makeComparer com ctx key
         makeEqualityComparer com ctx key |> makeHashSetWithComparer com r t sourceSeq
-    | _ -> Helper.GlobalCall("Set", t, [ sourceSeq ], isConstructor = true, ?loc = r)
+    | _ ->
+        // Helper.GlobalCall("Set", t, [ sourceSeq ], isConstructor = true, ?loc = r)
+        Helper.LibCall(com, "NativeSet", "HashSet", t, [ sourceSeq ], isConstructor = true, ?loc = r)
 
 let rec getZero (com: ICompiler) (ctx: Context) (t: Type) =
     match t with

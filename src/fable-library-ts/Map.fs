@@ -123,7 +123,7 @@ module MapTree =
                 else // rotate left
                     mk (mk t1 k v t2'.Left) t2'.Key t2'.Value t2'.Right
             | _ -> failwith "internal error: Map.rebalance"
-        else if t1h > t2h + tolerance then // left is heavier than right
+        else if t1h > t2h + tolerance then
             match t1.Value with
             | :? MapTreeNode<'Key, 'Value> as t1' ->
                 // one of the nodes must have height > height t2 + 1
@@ -943,7 +943,7 @@ type Map<[<EqualityConditionalOn>] 'Key, [<EqualityConditionalOn; ComparisonCond
             false
 
         member m.entries() = m |> Seq.map (fun p -> p.Key, p.Value)
-        member m.get(k) = m.Item(k)
+        member m.get(k) = m.TryFind(k)
         member m.has(k) = m.ContainsKey(k)
         member m.keys() = m |> Seq.map (fun p -> p.Key)
 

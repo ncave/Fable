@@ -1,3 +1,57 @@
+// Options are erased in runtime by Fable, but we have
+// the `Some` type below to wrap values that would evaluate
+// to `undefined` in runtime. These two rules must be followed:
+
+// 1- `None` is always `undefined` in runtime, a non-strict null check
+//    (`x == null`) is enough to check the case of an option.
+// 2- To get the value of an option the `value` helper
+//    below must **always** be used.
+
+// Note: We use non-strict null check for backwards compatibility with
+// code that use F# options to represent values that could be null in JS
+
+export type Nullable<T> = T | null | undefined;
+
+export type Option<T> = T | Some<T> | undefined;
+
+// Using a class here for better compatibility with TS files importing Some
+export class Some<T> {
+  public value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+
+  public toJSON() {
+    return this.value;
+  }
+
+  // Don't add "Some" for consistency with erased options
+  public toString() {
+    return String(this.value);
+  }
+
+  public GetHashCode() {
+    return structuralHash(this.value);
+  }
+
+  public Equals(other: Option<T>): boolean {
+    if (other == null) {
+      return false;
+    } else {
+      return equals(this.value, other instanceof Some ? other.value : other);
+    }
+  }
+
+  public CompareTo(other: Option<T>) {
+    if (other == null) {
+      return 1;
+    } else {
+      return compare(this.value, other instanceof Some ? other.value : other);
+    }
+  }
+}
+
 // Don't change, this corresponds to DateTime.Kind enum values in .NET
 export const enum DateKind {
   Unspecified = 0,
@@ -183,7 +237,7 @@ export interface ISet<T> {
 
 export interface IMapOrWeakMap<K, V> {
   delete(key: K): boolean;
-  get(key: K): V | undefined;
+  get(key: K): Option<V>;
   has(key: K): boolean;
   set(key: K, value: V): IMapOrWeakMap<K, V>;
 }
