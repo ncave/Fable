@@ -23,6 +23,7 @@ type Import =
         Selector: string
         LocalIdent: string option
         Path: string
+        IsType: bool
     }
 
 type ITailCallOpportunity =
@@ -62,13 +63,14 @@ type IBabelCompiler =
     abstract GetAllImports: unit -> Import seq
 
     abstract GetImportExpr:
-        Context * selector: string * path: string * range: SourceLocation option * ?noMangle: bool -> Expression
+        Context * selector: string * path: string * range: SourceLocation option * typ: Fable.Type * ?noMangle: bool ->
+            Expression
 
     abstract TransformAsExpr: Context * Fable.Expr -> Expression
 
     abstract TransformAsStatements: Context * ReturnStrategy option * Fable.Expr -> Statement array
 
-    abstract TransformImport: Context * selector: string * path: string -> Expression
+    abstract TransformImport: Context * selector: string * path: string * typ: Fable.Type -> Expression
 
     abstract TransformFunction:
         Context * string option * Fable.Ident list * Fable.Expr -> (Parameter array) * BlockStatement
@@ -85,12 +87,13 @@ module Lib =
         let typeArguments =
             Annotation.makeTypeParamInstantiationIfTypeScript com ctx genArgs
 
-        let callee = com.TransformImport(ctx, memberName, getLibPath com moduleName)
+        let callee =
+            com.TransformImport(ctx, memberName, getLibPath com moduleName, Fable.Any)
 
         Expression.callExpression (callee, List.toArray args, ?typeArguments = typeArguments, ?loc = r)
 
     let libValue (com: IBabelCompiler) ctx moduleName memberName =
-        com.TransformImport(ctx, memberName, getLibPath com moduleName)
+        com.TransformImport(ctx, memberName, getLibPath com moduleName, Fable.Any)
 
     let tryJsConstructorWithSuffix (com: IBabelCompiler) ctx ent (suffix: string) =
         match JS.Replacements.tryConstructor com ent with
@@ -676,7 +679,8 @@ module Annotation =
         Identifier.identifier (typeName) |> makeGenericTypeAnnotation com ctx genArgs
 
     let makeFableLibImportTypeId (com: IBabelCompiler) ctx moduleName typeName =
-        let expr = com.GetImportExpr(ctx, typeName, getLibPath com moduleName, None)
+        let expr =
+            com.GetImportExpr(ctx, typeName, getLibPath com moduleName, None, Fable.MetaType)
 
         match expr with
         | Expression.Identifier(id) -> id
@@ -1010,7 +1014,7 @@ module Util =
             | Naming.Regex IMPORT_REGEX (_ :: selector :: path :: _) ->
                 if selector.StartsWith("{", StringComparison.Ordinal) then
                     for selector in selector.TrimStart('{').TrimEnd('}').Split(',') do
-                        com.GetImportExpr(ctx, selector, path, r, noMangle = true) |> ignore
+                        com.GetImportExpr(ctx, selector, path, r, Fable.Any, noMangle = true) |> ignore
 
                     true
                 else
@@ -1020,7 +1024,7 @@ module Util =
                         else
                             $"default as {selector}"
 
-                    com.GetImportExpr(ctx, selector, path, r, noMangle = true) |> ignore
+                    com.GetImportExpr(ctx, selector, path, r, Fable.Any, noMangle = true) |> ignore
 
                     true
             | _ -> false
@@ -1525,12 +1529,12 @@ module Util =
             yield Statement.continueStatement (Identifier.identifier (tc.Label), ?loc = range)
         |]
 
-    let transformImport (com: IBabelCompiler) ctx r (selector: string) (path: string) =
+    let transformImport (com: IBabelCompiler) ctx r t (selector: string) (path: string) =
         let selector, parts =
             let parts = Array.toList (selector.Split('.'))
             parts.Head, parts.Tail
 
-        com.GetImportExpr(ctx, selector, path, r) |> getParts parts
+        com.GetImportExpr(ctx, selector, path, r, t) |> getParts parts
 
     let transformCast (com: IBabelCompiler) (ctx: Context) t e : Expression =
         match t with
@@ -3001,12 +3005,7 @@ but thanks to the optimisation done below we get
 
         | Fable.IdentExpr id -> transformIdent com ctx id
 
-        | Fable.Import({
-                           Selector = selector
-                           Path = path
-                       },
-                       _,
-                       r) -> transformImport com ctx r selector path
+        | Fable.Import(info, t, r) -> transformImport com ctx r t info.Selector info.Path
 
         | Fable.Test(expr, kind, range) -> transformTest com ctx range kind expr
 
@@ -3111,12 +3110,11 @@ but thanks to the optimisation done below we get
 
         | Fable.IdentExpr id -> [| transformIdent com ctx id |> resolveExpr id.Type returnStrategy |]
 
-        | Fable.Import({
-                           Selector = selector
-                           Path = path
-                       },
-                       t,
-                       r) -> [| transformImport com ctx r selector path |> resolveExpr t returnStrategy |]
+        | Fable.Import(info, t, r) ->
+            [|
+                transformImport com ctx r t info.Selector info.Path
+                |> resolveExpr t returnStrategy
+            |]
 
         | Fable.Test(expr, kind, range) ->
             [|
@@ -4478,7 +4476,7 @@ but thanks to the optimisation done below we get
                         else
                             transformClassWithCompilerGeneratedConstructor com ctx ent decl classMembers
 
-    let transformImports (imports: Import seq) : ModuleDeclaration list =
+    let transformImports (com: IBabelCompiler) ctx (imports: Import seq) : ModuleDeclaration list =
         let statefulImports = ResizeArray()
 
         imports
@@ -4491,7 +4489,10 @@ but thanks to the optimisation done below we get
                     match import.Selector with
                     | "*" -> ImportNamespaceSpecifier(localId)
                     | "default" -> ImportDefaultSpecifier(localId)
-                    | memb -> ImportMemberSpecifier(localId, Identifier.identifier (memb))
+                    | name ->
+                        let importId = Identifier.identifier (name)
+                        let isType = com.IsTypeScript && import.IsType
+                        ImportMemberSpecifier(localId, importId, isType)
                 )
 
             import.Path, specifier
@@ -4581,7 +4582,7 @@ module Compiler =
                 if onlyOnceWarnings.Add(msg) then
                     addWarning com [] range msg
 
-            member com.GetImportExpr(ctx, selector, path, r, noMangle) =
+            member com.GetImportExpr(ctx, selector, path, r, t, noMangle) =
                 let noMangle = defaultArg noMangle false
                 let selector = selector.Trim()
                 let path = path.Trim()
@@ -4603,6 +4604,7 @@ module Compiler =
                             Selector = selector
                             Path = path
                             LocalIdent = localId
+                            IsType = (t = Fable.MetaType)
                         }
 
                     imports.Add(cachedName, i)
@@ -4619,8 +4621,8 @@ module Compiler =
             member bcom.TransformFunction(ctx, name, args, body) =
                 transformFunction bcom ctx name args body
 
-            member bcom.TransformImport(ctx, selector, path) =
-                transformImport bcom ctx None selector path
+            member bcom.TransformImport(ctx, selector, path, typ) =
+                transformImport bcom ctx None typ selector path
 
             member _.SaveTopDirectivePrologue(text: string) =
                 topDirectivesPrologue.Add text |> ignore
@@ -4689,6 +4691,6 @@ module Compiler =
         let topDirectivesPrologue =
             com.GetAllAllTopDirectivesPrologue() |> transformDirectivesPrologue
 
-        let importDecls = com.GetAllImports() |> transformImports
+        let importDecls = com.GetAllImports() |> transformImports com ctx
         let body = topDirectivesPrologue @ importDecls @ rootDecls |> List.toArray
         Program(body)

@@ -206,7 +206,8 @@ module PrinterExtensions =
                 items,
                 (fun p x ->
                     match x with
-                    | ImportMemberSpecifier(local, imported) -> p.PrintImportMemberSpecific(local, imported)
+                    | ImportMemberSpecifier(local, imported, isType) ->
+                        p.PrintImportMemberSpecific(local, imported, isType)
                     | ImportDefaultSpecifier(local) -> printer.PrintIdent(local)
                     | ImportNamespaceSpecifier(local) -> printer.PrintImportNamespaceSpecifier(local)
                 ),
@@ -1389,8 +1390,11 @@ module PrinterExtensions =
             printer.PrintOptional(typeAnnotation, ": ")
             printer.PrintOptional(value, " = ")
 
-        member printer.PrintImportMemberSpecific(local, imported) =
+        member printer.PrintImportMemberSpecific(local, imported, isType) =
             // Don't print the braces, node will be done in the import declaration
+            if isType then
+                printer.Print("type ")
+
             printer.PrintIdent(imported)
 
             if imported.Name <> local.Name then
@@ -1406,7 +1410,7 @@ module PrinterExtensions =
                 specifiers
                 |> Array.choose (
                     function
-                    | ImportMemberSpecifier(local, imported) -> Some(ImportMemberSpecifier(local, imported))
+                    | ImportMemberSpecifier _ as x -> Some x
                     | _ -> None
                 )
 
@@ -1414,7 +1418,7 @@ module PrinterExtensions =
                 specifiers
                 |> Array.choose (
                     function
-                    | ImportDefaultSpecifier(local) -> Some(ImportDefaultSpecifier(local))
+                    | ImportDefaultSpecifier _ as x -> Some x
                     | _ -> None
                 )
 
@@ -1422,7 +1426,7 @@ module PrinterExtensions =
                 specifiers
                 |> Array.choose (
                     function
-                    | ImportNamespaceSpecifier(local) -> Some(ImportNamespaceSpecifier(local))
+                    | ImportNamespaceSpecifier _ as x -> Some x
                     | _ -> None
                 )
 
