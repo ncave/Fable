@@ -2358,6 +2358,16 @@ let private arrayModule
             [ fn; arr ]
             "(fun() -> {Pt_a, Pt_b} = lists:partition($0, $1), {fable_utils:new_ref(Pt_a), fable_utils:new_ref(Pt_b)} end)()"
         |> Some
+    | "PartitionWith", [ fn; arr ] ->
+        let arr = derefArr r arr
+        let result = Helper.LibCall(com, "fable_list", "partition_with", t, [ fn; arr ])
+
+        emitExpr
+            r
+            t
+            [ result ]
+            "(fun() -> {Pw_a, Pw_b} = $0, {fable_utils:new_ref(Pw_a), fable_utils:new_ref(Pw_b)} end)()"
+        |> Some
     | "Permute", [ fn; arr ] ->
         let arr = derefArr r arr
 

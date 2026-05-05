@@ -789,6 +789,21 @@ let ``Array.partition works`` () =
     zs |> equal [| 1; 3; 5 |]
 
 [<Fact>]
+let ``Array.partitionWith works`` () =
+    let xs = [| 1; 2; 3; 4; 5 |]
+
+    let ys, zs =
+        xs
+        |> Array.partitionWith (fun x ->
+            if x % 2 = 0 then
+                Choice1Of2(x * 10)
+            else
+                Choice2Of2(x * 100))
+
+    ys |> equal [| 20; 40 |]
+    zs |> equal [| 100; 300; 500 |]
+
+[<Fact>]
 let ``Array.pairwise works`` () =
     Array.pairwise<int> [||] |> equal [||]
     Array.pairwise [|1|] |> equal [||]

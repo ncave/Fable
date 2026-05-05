@@ -20,6 +20,7 @@
     find_index_back/2,
     try_find_index_back/2,
     choose/2,
+    partition_with/2,
     collect/2,
     sum_by/2,
     min_by/2,
@@ -107,6 +108,7 @@
 -spec find_index_back(fun(), list()) -> non_neg_integer().
 -spec try_find_index_back(fun(), list()) -> non_neg_integer() | undefined.
 -spec choose(fun(), list()) -> list().
+-spec partition_with(fun(), list()) -> {list(), list()}.
 -spec collect(fun(), list()) -> list().
 -spec sum_by(fun(), list()) -> number().
 -spec min_by(fun(), list()) -> term().
@@ -259,6 +261,18 @@ choose(Fn, List) ->
                 V -> {true, fable_option:unwrap(V)}
             end
         end,
+        List
+    ).
+
+partition_with(Fn, List) ->
+    lists:foldr(
+        fun(E, {Left, Right}) ->
+            case Fn(E) of
+                {choice1_of2, V} -> {[V | Left], Right};
+                {choice2_of2, V} -> {Left, [V | Right]}
+            end
+        end,
+        {[], []},
         List
     ).
 

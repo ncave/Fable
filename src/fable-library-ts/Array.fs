@@ -434,6 +434,17 @@ let partition (f: 'T -> bool) (source: 'T[]) ([<OptionalArgument; Inject>] cons:
 
     res1 |> truncate iTrue, res2 |> truncate iFalse
 
+let partitionWith (partitioner: 'T -> Choice<'U1, 'U2>) (source: 'T[]) : 'U1[] * 'U2[] =
+    let res1 = ResizeArray<'U1>()
+    let res2 = ResizeArray<'U2>()
+
+    for i = 0 to source.Length - 1 do
+        match partitioner source.[i] with
+        | Choice1Of2 x -> pushImpl res1 x |> ignore
+        | Choice2Of2 y -> pushImpl res2 y |> ignore
+
+    res1 |> asArray, res2 |> asArray
+
 let find (predicate: 'T -> bool) (array: 'T[]) : 'T =
     match findImpl predicate array with
     | Some res -> res

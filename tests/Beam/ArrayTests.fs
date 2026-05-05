@@ -643,6 +643,21 @@ let ``test Array.partition works`` () =
     equal ys [| 1. |]
     equal zs [| 2.; 3. |]
 
+[<Fact>]
+let ``test Array.partitionWith works`` () =
+    let xs = [| 1; 2; 3; 4; 5 |]
+
+    let ys, zs =
+        xs
+        |> Array.partitionWith (fun x ->
+            if x % 2 = 0 then
+                Choice1Of2(x * 10)
+            else
+                Choice2Of2(x * 100))
+
+    equal ys [| 20; 40 |]
+    equal zs [| 100; 300; 500 |]
+
 // --- Distinct ---
 
 [<Fact>]

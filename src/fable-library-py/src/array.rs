@@ -1923,6 +1923,41 @@ impl FSharpArray {
         })
     }
 
+    #[pyo3(signature = (f))]
+    pub fn partition_with(&self, py: Python<'_>, f: &Bound<'_, PyAny>) -> PyResult<FSharpArray> {
+        let len = self.storage.len();
+        let mut results1 = NativeArray::new(&ArrayType::Generic, Some(len));
+        let mut results2 = NativeArray::new(&ArrayType::Generic, Some(len));
+
+        for i in 0..len {
+            let item = self.get_item_at_index(i as isize, py)?;
+            let choice = f.call1((item.bind(py),))?;
+            let tag: usize = choice.getattr("tag")?.extract()?;
+            let fields = choice.getattr("fields")?;
+            let value = fields.get_item(0)?;
+
+            match tag {
+                0 => results1.push_value(&value, py)?,
+                1 => results2.push_value(&value, py)?,
+                _ -> {
+                    return Err(PyErr::new::<exceptions::PyValueError, _>(
+                        "partition_with expects Choice1Of2 or Choice2Of2 values.",
+                    ));
+                }
+            }
+        }
+
+        let left = FSharpArray { storage: results1 };
+        let right = FSharpArray { storage: results2 };
+        let mut final_results = NativeArray::new(&ArrayType::Generic, Some(2));
+        final_results.push_value(Py::new(py, left)?.bind(py), py)?;
+        final_results.push_value(Py::new(py, right)?.bind(py), py)?;
+
+        Ok(FSharpArray {
+            storage: final_results,
+        })
+    }
+
     pub fn transpose(
         &self,
         py: Python<'_>,
@@ -4707,6 +4742,16 @@ pub fn partition(
 }
 
 #[pyfunction]
+pub fn partition_with(
+    py: Python<'_>,
+    f: &Bound<'_, PyAny>,
+    array: &Bound<'_, PyAny>,
+) -> PyResult<FSharpArray> {
+    let array = ensure_array(py, array)?;
+    array.partition_with(py, f)
+}
+
+#[pyfunction]
 #[pyo3(signature = (arrays, cons=None))]
 pub fn concat(
     py: Python<'_>,
@@ -5552,6 +5597,7 @@ pub fn register_array_module(parent_module: &Bound<'_, PyModule>) -> PyResult<()
     m.add_function(wrap_pyfunction!(of_seq, &m)?)?;
     m.add_function(wrap_pyfunction!(pairwise, &m)?)?;
     m.add_function(wrap_pyfunction!(partition, &m)?)?;
+    m.add_function(wrap_pyfunction!(partition_with, &m)?)?;
     m.add_function(wrap_pyfunction!(permute, &m)?)?;
     m.add_function(wrap_pyfunction!(pick, &m)?)?;
     m.add_function(wrap_pyfunction!(reduce, &m)?)?;

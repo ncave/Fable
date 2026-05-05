@@ -100,6 +100,7 @@ min_by = array.min_by
 of_seq = array.of_seq
 pairwise = array.pairwise
 partition = array.partition
+partition_with = array.partition_with
 permute = array.permute
 pick = array.pick
 random_choice = array.random_choice
@@ -259,6 +260,7 @@ __all__ = [
     "of_seq",
     "pairwise",
     "partition",
+    "partition_with",
     "permute",
     "pick",
     "reduce",

@@ -362,6 +362,17 @@ let partition (predicate: 'T -> bool) (source: 'T[]) : 'T[] * 'T[] =
 
     res1 |> asArray, res2 |> asArray
 
+let partitionWith (partitioner: 'T -> Choice<'U1, 'U2>) (source: 'T[]) : 'U1[] * 'U2[] =
+    let res1 = ResizeArray<'U1>()
+    let res2 = ResizeArray<'U2>()
+
+    for i = 0 to source.Length - 1 do
+        match partitioner source[i] with
+        | Choice1Of2 x -> res1.Add(x)
+        | Choice2Of2 y -> res2.Add(y)
+
+    res1 |> asArray, res2 |> asArray
+
 let reduce reduction (source: 'T[]) : 'T =
     if isEmpty source then
         invalidOp SR.arrayWasEmpty

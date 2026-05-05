@@ -423,6 +423,17 @@ let partition (f: 'T -> bool) (source: 'T[]) =
 
     Native.asFixed res1, Native.asFixed res2
 
+let partitionWith (partitioner: 'T -> Choice<'U1, 'U2>) (source: 'T[]) : 'U1[] * 'U2[] =
+    let res1 = ResizeArray<'U1>()
+    let res2 = ResizeArray<'U2>()
+
+    for x in source do
+        match partitioner x with
+        | Choice1Of2 y -> res1.Add(y)
+        | Choice2Of2 y -> res2.Add(y)
+
+    Native.asFixed res1, Native.asFixed res2
+
 let find (predicate: 'T -> bool) (array: 'T[]) : 'T = Native.firstWhere (array, predicate)
 
 let tryFind (predicate: 'T -> bool) (array: 'T[]) : 'T option =

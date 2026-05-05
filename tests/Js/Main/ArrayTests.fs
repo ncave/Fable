@@ -760,6 +760,18 @@ let tests =
         equal ys [| 1. |]
         equal zs [| 2.; 3. |]
 
+    testCase "Array.partitionWith works" <| fun () ->
+        let xs = [| 1; 2; 3; 4; 5 |]
+        let ys, zs =
+            xs
+            |> Array.partitionWith (fun x ->
+                if x % 2 = 0 then
+                    Choice1Of2(x * 10)
+                else
+                    Choice2Of2(x * 100))
+        equal ys [| 20; 40 |]
+        equal zs [| 100; 300; 500 |]
+
     testCase "Array.permute works" <| fun () ->
         let xs = [|1.; 2.|]
         let ys = xs |> Array.permute (fun i -> i + 1 - 2 * (i % 2))
