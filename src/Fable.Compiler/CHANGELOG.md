@@ -1,5 +1,5 @@
 ---
-last_commit_released: b471dc16fc3b5132af77b5974d1669c9b8220cca
+last_commit_released: ba9857a4dcbf7ab1f936241f6619fda43e039040
 include:
   - ../fable-library-beam/
   - ../fable-library-dart/
@@ -20,6 +20,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## 5.1.0 - 2026-05-14
+
+### 🚀 Features
+
+* *(js/ts/python)* Add missing standard DateTime format specifiers for JS/TS and Python (#4547) ([90f5eb7](https://github.com/ncave/Fable/commit/90f5eb7f61710bc679f6fdec30ff5d864984ac08))
+* *(js/ts/python)* Add missing StringBuilder.Append overloads for numeric types (#4568) ([b402c30](https://github.com/ncave/Fable/commit/b402c30d04bfca8644314ba4b21894abfff6a713))
+
+### 🐞 Bug Fixes
+
+* Check MSBuild exit code instead of stderr for project cracker failure detection (#4564) ([914a616](https://github.com/ncave/Fable/commit/914a61665f0a264bf04da6c7bce6fb3cc87eab4c))
+* [JS/TS] Fix DatetimeOffset.ToString("s") (#4596) ([3ce6f3f](https://github.com/ncave/Fable/commit/3ce6f3fd88cc7f67e34e2bbc311e722c55ffbf45))
+* *(all)* Duplicate LetRec bindings during inline expansion (#4592) ([62612a5](https://github.com/ncave/Fable/commit/62612a5bb42644934b7573b7cf8f9db930c5dc37))
+* *(beam)* Handle string binaries in Seq enumerator (#4591) ([6e78058](https://github.com/ncave/Fable/commit/6e780589b5dba114ffe2238c973f26e329e048aa))
+* *(js/ts)* Fix JSX props with long string values causing compile error (fixes #3839) (#4545) ([d828a46](https://github.com/ncave/Fable/commit/d828a461797e3f33bf4ab99b46030d16b29771e6))
+* *(js/ts)* Fix datetime custom format off by one year (#4558) ([83bdbb5](https://github.com/ncave/Fable/commit/83bdbb5b34e70eae203831a3a442d477d15911e1))
+* *(js/ts)* Hex format specifier uses no padding unless precision is specified (#4603) ([ba9857a](https://github.com/ncave/Fable/commit/ba9857a4dcbf7ab1f936241f6619fda43e039040))
+* *(js/ts/python)* Fix FSharpOption not recognized as union type in F# reflection (#4529) ([d78a37d](https://github.com/ncave/Fable/commit/d78a37db9f4c25eb51fac8afcd320b4ea36c60a7))
+* *(python)* Fix regex lookbehind patterns being incorrectly converted (#4560) ([4ce5cd7](https://github.com/ncave/Fable/commit/4ce5cd7b14a533aa3a08fe14c108ec30d662623f))
+* *(ts)* Enforce browser-only compatibility in fable-library-ts tsconfig (#4563) ([10c81c1](https://github.com/ncave/Fable/commit/10c81c1361208eb61f5fa78c6704e6fccc068fb1))
+
+<strong><small>[View changes on Github](https://github.com/ncave/Fable/compare/b471dc16fc3b5132af77b5974d1669c9b8220cca..ba9857a4dcbf7ab1f936241f6619fda43e039040)</small></strong>
 
 ## 5.0.0 - 2026-04-21
 
