@@ -84,6 +84,10 @@ type TimeoutException(message: string) =
     inherit Exception(message, null)
     new() = TimeoutException(SR.Arg_TimeoutException)
 
+type OperationCanceledException(message: string) =
+    inherit Exception(message, null)
+    new() = OperationCanceledException(SR.Arg_OperationCanceledException)
+
 type ArgumentException(message: string, paramName: string, innerException: Exception) =
     inherit Exception(message, innerException)
 

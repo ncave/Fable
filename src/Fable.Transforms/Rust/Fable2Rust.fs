@@ -4165,38 +4165,88 @@ module Util =
             mkLifetimeGenericBound "'static" //TODO: add it only when needed
         ]
 
+    let sendSyncBounds =
+        [
+            mkTypeTraitGenericBound [ rawIdent "Send" ] None
+            mkTypeTraitGenericBound [ rawIdent "Sync" ] None
+        ]
+
+    let rec collectAsyncInnerGenParamNames (t: Fable.Type) : Set<string> =
+        match t with
+        | Fable.DeclaredType(entRef, genArgs) when entRef.FullName = Types.fsharpAsyncGeneric ->
+            genArgs
+            |> List.fold
+                (fun acc ga ->
+                    match ga with
+                    | Fable.GenericParam(name, false, _) -> acc |> Set.add name
+                    | _ -> Set.union acc (collectAsyncInnerGenParamNames ga)
+                )
+                Set.empty
+        | Fable.DeclaredType(_, genArgs) ->
+            genArgs
+            |> List.fold (fun acc ga -> Set.union acc (collectAsyncInnerGenParamNames ga)) Set.empty
+        | Fable.LambdaType(argType, returnType) ->
+            Set.union (collectAsyncInnerGenParamNames argType) (collectAsyncInnerGenParamNames returnType)
+        | Fable.DelegateType(argTypes, returnType) ->
+            argTypes
+            |> List.fold
+                (fun acc t -> Set.union acc (collectAsyncInnerGenParamNames t))
+                (collectAsyncInnerGenParamNames returnType)
+        | Fable.Option(t, _) -> collectAsyncInnerGenParamNames t
+        | Fable.Array(t, _) -> collectAsyncInnerGenParamNames t
+        | Fable.List t -> collectAsyncInnerGenParamNames t
+        | Fable.Tuple(types, _) ->
+            types
+            |> List.fold (fun acc t -> Set.union acc (collectAsyncInnerGenParamNames t)) Set.empty
+        | _ -> Set.empty
+
+
     // let makeDefaultTypeBounds com ctx =
     //     let importName = getLibraryImportName com ctx "Native" "IObject"
     //     let objectBound = mkTypeTraitGenericBound [ importName ] None
     //     objectBound :: defaultTypeBounds
 
-    let makeGenericParams com ctx (genParams: Fable.GenericParam list) =
+    let makeGenericParams com ctx (asyncBounded: Set<string>) (genParams: Fable.GenericParam list) =
         genParams
         |> List.choose (fun p ->
             if p.IsMeasure then
                 None
             else
                 let typeBounds = makeTypeBounds com ctx p.Name p.Constraints
-                let typeBounds = typeBounds @ defaultTypeBounds
+
+                let extra =
+                    if asyncBounded |> Set.contains p.Name then
+                        sendSyncBounds
+                    else
+                        []
+
+                let typeBounds = typeBounds @ defaultTypeBounds @ extra
                 mkGenericParamFromName [] p.Name typeBounds |> Some
         )
 
-    let makeGenericParamsFromArgs com ctx (genArgs: Fable.Type list) =
+    let makeGenericParamsFromArgs com ctx (asyncBounded: Set<string>) (genArgs: Fable.Type list) =
         genArgs
         |> List.choose (
             function
             | Fable.GenericParam(name, isMeasure, constraints) when not isMeasure ->
                 let typeBounds = makeTypeBounds com ctx name constraints
-                let typeBounds = typeBounds @ defaultTypeBounds
+
+                let extra =
+                    if asyncBounded |> Set.contains name then
+                        sendSyncBounds
+                    else
+                        []
+
+                let typeBounds = typeBounds @ defaultTypeBounds @ extra
                 mkGenericParamFromName [] name typeBounds |> Some
             | _ -> None
         )
 
     let makeGenerics com ctx (genArgs: Fable.Type list) =
-        makeGenericParamsFromArgs com ctx genArgs |> mkGenerics
+        makeGenericParamsFromArgs com ctx Set.empty genArgs |> mkGenerics
 
-    let makeMemberGenerics com ctx (genParams: Fable.GenericParam list) =
-        makeGenericParams com ctx genParams |> mkGenerics
+    let makeMemberGenerics com ctx (asyncBounded: Set<string>) (genParams: Fable.GenericParam list) =
+        makeGenericParams com ctx asyncBounded genParams |> mkGenerics
 
     let makeFnHeader com ctx (attributes: Fable.Attribute seq) : Rust.FnHeader =
         let isAsync = attributes |> Seq.exists (fun a -> a.Entity.FullName = Atts.rustAsync)
@@ -4221,9 +4271,11 @@ module Util =
 
     let transformNestedFunction com ctx (ident: Fable.Ident) (args: Fable.Ident list) (body: Fable.Expr) usages =
         let name = ident.Name
+        // Use IsLambda=false so nested fn items get proper type param names instead of _ placeholders
+        let fnCtx = { ctx with IsLambda = false }
 
         let fnDecl, fnBody, genArgs =
-            transformFunc com ctx [] body.Type (Some name) args body
+            transformFunc com fnCtx [] body.Type (Some name) args body
 
         let fnBodyBlock =
             if body.Type = Fable.Unit then
@@ -4232,7 +4284,38 @@ module Util =
                 mkExprBlock fnBody
 
         let header = DEFAULT_FN_HEADER
-        let generics = makeGenerics com ctx genArgs
+        // Compute async bounds for nested function generic params (same as for module functions)
+        let asyncBounded =
+            args
+            |> List.map (fun a -> a.Type)
+            |> List.fold
+                (fun acc t -> Set.union acc (collectAsyncInnerGenParamNames t))
+                (collectAsyncInnerGenParamNames body.Type)
+
+        let generics =
+            match genArgs with
+            | [] -> mkGenerics []
+            | _ ->
+                let genParams =
+                    genArgs
+                    |> List.choose (fun t ->
+                        match t with
+                        | Fable.GenericParam(name, isMeasure, constraints) when not isMeasure ->
+                            let typeBounds = makeTypeBounds com fnCtx name constraints
+
+                            let extra =
+                                if asyncBounded |> Set.contains name then
+                                    sendSyncBounds
+                                else
+                                    []
+
+                            let typeBounds = typeBounds @ defaultTypeBounds @ extra
+                            mkGenericParamFromName [] name typeBounds |> Some
+                        | _ -> None
+                    )
+
+                mkGenerics genParams
+
         let fnKind = mkFnKind header fnDecl generics (Some fnBodyBlock)
         let attrs = []
         let fnItem = mkFnItem attrs name fnKind
@@ -4355,7 +4438,15 @@ module Util =
                 mkExprBlock fnBody
 
         let header = makeFnHeader com ctx memb.Attributes
-        let generics = makeMemberGenerics com ctx memb.GenericParameters
+
+        let asyncBounded =
+            decl.Args
+            |> List.map (fun a -> a.Type)
+            |> List.fold
+                (fun acc t -> Set.union acc (collectAsyncInnerGenParamNames t))
+                (collectAsyncInnerGenParamNames decl.Body.Type)
+
+        let generics = makeMemberGenerics com ctx asyncBounded memb.GenericParameters
         let kind = mkFnKind header fnDecl generics (Some fnBodyBlock)
         let attrs = transformAttributes com ctx memb.Attributes memb.XmlDoc
         let fnItem = mkFnItem attrs name kind
@@ -4821,7 +4912,7 @@ module Util =
             let traitBound = mkTypeTraitGenericBound [ entName ] genArgsOpt
             let typeBounds = traitBound :: defaultInterfaceTypeBounds
             let typeParam = mkGenericParamFromName [] typeName typeBounds
-            let genParams = makeGenericParamsFromArgs com ctx genArgs
+            let genParams = makeGenericParamsFromArgs com ctx Set.empty genArgs
             let generics = typeParam :: genParams |> mkGenerics
             let ty = mkGenericTy [ typeName ] [] |> makeLrcPtrTy com ctx
             let path = mkGenericPath [ entName ] None genArgsOpt
@@ -5262,6 +5353,7 @@ module Util =
             else
                 let implItem = memberItems |> makeTraitImpl com ctx entName genArgs None
                 [ implItem ]
+
 
         let baseTypeOpt =
             if isObjectExpr then

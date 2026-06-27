@@ -44,6 +44,7 @@ let handle (args: string list) =
         Directory.clean (mainTestsDestinationDir </> "tests" </> "src")
         Directory.clean (mainTestsDestinationDir </> "tests" </> "tests")
         Directory.clean (mainTestsDestinationDir </> "tests" </> ".fable")
+        Directory.clean (mainTestsDestinationDir </> "fable_modules")
 
         // copy rust only tests files (these must be present when running dotnet test as import expr tests for file presence)
         Directory.CreateDirectory(mainTestsDestinationDir </> "tests" </> "src")

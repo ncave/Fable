@@ -55,6 +55,7 @@ module SR =
     let Arg_NotFiniteNumberException = "Number encountered was not a finite quantity."
     let Arg_NotImplementedException = "The method or operation is not implemented."
     let Arg_NotSupportedException = "Specified method is not supported."
+    let Arg_OperationCanceledException = "The operation was canceled"
 
     let Arg_NullReferenceException =
         "Object reference not set to an instance of an object."

@@ -957,7 +957,7 @@ let operators (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Expr o
         | _ ->
             Helper.LibCall(com, "Option", "defaultArg", t, args, i.SignatureArgTypes, ?loc = r)
             |> Some
-    | "DefaultAsyncBuilder", _ -> makeImportLib com t "singleton" "AsyncBuilder" |> Some
+    | "DefaultAsyncBuilder", _ -> Value(UnitConstant, r) |> Some
     // Erased operators.
     // Rust compiles KeyValuePair as a struct tuple, but the KeyValue active pattern expects a regular tuple.
     | "KeyValuePattern", [ arg ] ->
@@ -2817,11 +2817,15 @@ let random (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Expr opti
 
 let cancels (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Expr option) (args: Expr list) =
     match i.CompiledName with
-    | "get_None" // TODO: implement as non-cancellable token
+    | "get_None" -> // TODO: implement as non-cancellable token
+        Helper.LibCall(com, "Async", "createCancellationToken", t, [], []) |> Some
     | ".ctor" ->
-        Helper.LibCall(com, "Async", "createCancellationToken", t, args, i.SignatureArgTypes)
-        |> Some
-    | "get_Token" -> thisArg
+        match args with
+        | [] -> Helper.LibCall(com, "Async", "createCancellationToken", t, [], []) |> Some
+        | _ ->
+            Helper.LibCall(com, "Async", "createCancellationTokenWithDelay", t, args, i.SignatureArgTypes)
+            |> Some
+    | "get_Token" -> makeLibModuleCall com r t i "Async" "getToken" thisArg args |> Some
     | "Cancel"
     | "CancelAfter"
     | "get_IsCancellationRequested"
@@ -2830,7 +2834,7 @@ let cancels (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Expr opt
         makeLibModuleCall com r t i "Async" meth thisArg args |> Some
     // TODO: Add check so CancellationTokenSource cannot be cancelled after disposed?
     | "Dispose" -> Null Type.Unit |> makeValue r |> Some
-    | "Register" -> makeInstanceCall r t i thisArg.Value "register" args |> Some
+    | "Register" -> makeLibModuleCall com r t i "Async" "register" thisArg args |> Some
     | _ -> None
 
 let monitor (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Expr option) (args: Expr list) =
@@ -3022,12 +3026,39 @@ let asyncBuilder (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Exp
     | "Singleton", _, _ -> Value(UnitConstant, r) |> Some
     //makeImportLib com t "singleton" "AsyncBuilder" |> Some
     // For Using we need to cast the argument to IDisposable
-    | "Using", Some callee, [ arg; f ] -> makeInstanceCall r t i callee "Using" [ arg; f ] |> Some
+    | "Using", _, _ ->
+        Helper.LibCall(com, "AsyncBuilder", "using", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
     | "Delay", _, _ ->
         Helper.LibCall(com, "AsyncBuilder", "delay", t, args, i.SignatureArgTypes, ?loc = r)
         |> Some
     | "Bind", _, _ ->
         Helper.LibCall(com, "AsyncBuilder", "bind", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "Combine", _, _ ->
+        Helper.LibCall(com, "AsyncBuilder", "combine", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "While", _, [ guard; computation ] ->
+        let delayedComputation = Delegate([], computation, None, Tags.empty)
+
+        Helper.LibCall(
+            com,
+            "AsyncBuilder",
+            "while_loop",
+            t,
+            [ guard; delayedComputation ],
+            [ guard.Type; delayedComputation.Type ],
+            ?loc = r
+        )
+        |> Some
+    | "For", _, _ ->
+        Helper.LibCall(com, "AsyncBuilder", "for_loop", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "TryWith", _, _ ->
+        Helper.LibCall(com, "AsyncBuilder", "try_with", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "TryFinally", _, _ ->
+        Helper.LibCall(com, "AsyncBuilder", "try_finally", t, args, i.SignatureArgTypes, ?loc = r)
         |> Some
     | "Return", _, _ ->
         Helper.LibCall(com, "AsyncBuilder", "r_return", t, args, i.SignatureArgTypes, ?loc = r)
@@ -3057,6 +3088,12 @@ let asyncs com (ctx: Context) r t (i: CallInfo) (_: Expr option) (args: Expr lis
     | "Catch" ->
         Helper.LibCall(com, "Async", "catchAsync", t, args, i.SignatureArgTypes, ?loc = r)
         |> Some
+    | "Parallel" ->
+        Helper.LibCall(com, "Async", "parallelAsync", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "Sequential" ->
+        Helper.LibCall(com, "Async", "sequentialAsync", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
     // Fable.Core extensions
     | meth ->
         Helper.LibCall(com, "Async", Naming.lowerFirst meth, t, args, i.SignatureArgTypes, ?loc = r)
@@ -3078,6 +3115,31 @@ let taskBuilderB (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Exp
     | "Bind", _, _ ->
         Helper.LibCall(com, "Task", "bind", t, args, i.SignatureArgTypes, ?loc = r)
         |> Some
+    | "Combine", _, _ ->
+        Helper.LibCall(com, "Task", "combine", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "While", _, [ guard; computation ] ->
+        let delayedComputation = Delegate([], computation, None, Tags.empty)
+
+        Helper.LibCall(
+            com,
+            "Task",
+            "while_loop",
+            t,
+            [ guard; delayedComputation ],
+            [ guard.Type; delayedComputation.Type ],
+            ?loc = r
+        )
+        |> Some
+    | "For", _, _ ->
+        Helper.LibCall(com, "Task", "for_loop", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "TryWith", _, _ ->
+        Helper.LibCall(com, "Task", "try_with", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "Using", _, _ ->
+        Helper.LibCall(com, "Task", "using", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
     | "Return", _, _ ->
         Helper.LibCall(com, "Task", "r_return", t, args, i.SignatureArgTypes, ?loc = r)
         |> Some
@@ -3085,7 +3147,7 @@ let taskBuilderB (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Exp
         Helper.LibCall(com, "Task", "delay", t, args, i.SignatureArgTypes, ?loc = r)
         |> Some
     | "Zero", _, _ ->
-        Helper.LibCall(com, "Task", "zero", t, args, i.SignatureArgTypes, ?loc = r)
+        Helper.LibCall(com, "Task", "r_return", t, [ Value(UnitConstant, r) ], ?loc = r)
         |> Some
     | _ -> None
 
@@ -3094,8 +3156,36 @@ let taskBuilderHP (com: ICompiler) (ctx: Context) r t (i: CallInfo) (thisArg: Ex
     | "TaskBuilderBase.Bind", _, _ ->
         Helper.LibCall(com, "Task", "bind", t, args, i.SignatureArgTypes, ?loc = r)
         |> Some
+    | "TaskBuilderBase.Combine", _, _ ->
+        Helper.LibCall(com, "Task", "combine", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "TaskBuilderBase.While", _, [ guard; computation ] ->
+        let delayedComputation = Delegate([], computation, None, Tags.empty)
+
+        Helper.LibCall(
+            com,
+            "Task",
+            "while_loop",
+            t,
+            [ guard; delayedComputation ],
+            [ guard.Type; delayedComputation.Type ],
+            ?loc = r
+        )
+        |> Some
+    | "TaskBuilderBase.For", _, _ ->
+        Helper.LibCall(com, "Task", "for_loop", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "TaskBuilderBase.TryWith", _, _ ->
+        Helper.LibCall(com, "Task", "try_with", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "TaskBuilderBase.Using", _, _ ->
+        Helper.LibCall(com, "Task", "using", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
+    | "TaskBuilderExtensions.LowPriority.TaskBuilderBase.Using", _, _ ->
+        Helper.LibCall(com, "Task", "using", t, args, i.SignatureArgTypes, ?loc = r)
+        |> Some
     | "TaskBuilderBase.Zero", _, _ ->
-        Helper.LibCall(com, "Task", "zero", t, args, i.SignatureArgTypes, ?loc = r)
+        Helper.LibCall(com, "Task", "r_return", t, [ Value(UnitConstant, r) ], ?loc = r)
         |> Some
     | meth, Some callee, _ -> makeInstanceCall r t i callee meth args |> Some
     | meth, None, _ ->
@@ -3545,6 +3635,7 @@ let private replacedModules =
             "Microsoft.FSharp.Control.TaskBuilder", taskBuilder
             "Microsoft.FSharp.Control.TaskBuilderBase", taskBuilderB
             "Microsoft.FSharp.Control.TaskBuilderExtensions.HighPriority", taskBuilderHP
+            "Microsoft.FSharp.Control.TaskBuilderExtensions.LowPriority", taskBuilderHP
             Types.guid, guids
             "System.Uri", uris
             "System.Lazy`1", laziness
