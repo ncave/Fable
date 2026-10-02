@@ -23,6 +23,7 @@ default = ["bigint", "datetime", "decimal", "enum_func", "enum_string", "guid", 
 
 [dependencies]
 chrono = { version = "0.4", optional = true }
+bitmask-enum = { version = "2.2" }
 futures = { version = "0.3", features = ["executor", "thread-pool"], default-features = false, optional = true }
 futures-timer = { version = "3.0", optional = true }
 hashable = { version = "0.1", path = "vendored/hashable" }

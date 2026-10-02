@@ -2135,8 +2135,8 @@ let private addUsedRootName (com: Compiler) name (usedRootNames: Set<string>) =
     Set.add name usedRootNames
 
 // Entities that are not output to other languages
-let private isIgnoredLeafEntity (ent: FSharpEntity) =
-    ent.IsEnum
+let private isIgnoredLeafEntity (com: Compiler) (ent: FSharpEntity) =
+    (ent.IsEnum && com.Options.Language <> Rust) // Rust has enums
     || ent.IsMeasure
     || ent.IsFSharpAbbreviation
     || ent.IsDelegate
@@ -2151,7 +2151,7 @@ let rec private getUsedRootNames (com: Compiler) (usedNames: Set<string>) decls 
         match decl with
         | FSharpImplementationFileDeclaration.Entity(ent, sub) ->
             match sub with
-            | [] when isIgnoredLeafEntity ent -> usedNames
+            | [] when isIgnoredLeafEntity com ent -> usedNames
             | [] ->
                 let entRef = FsEnt.Ref ent
                 let ent = com.GetEntity(entRef)
@@ -2194,7 +2194,7 @@ let rec private transformDeclarations (com: FableCompiler) ctx fsDecls =
         match fsDecl with
         | FSharpImplementationFileDeclaration.Entity(fsEnt, sub) ->
             match sub with
-            | [] when isIgnoredLeafEntity fsEnt -> []
+            | [] when isIgnoredLeafEntity com fsEnt -> []
             | [] ->
                 let entRef = FsEnt.Ref fsEnt
                 let ent = (com :> Compiler).GetEntity(entRef)

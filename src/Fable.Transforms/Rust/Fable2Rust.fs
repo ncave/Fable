@@ -1161,6 +1161,7 @@ module TypeInfo =
             // boxed value the quotation runtime returns; typeof-based reflection is unsupported
             // regardless (see the disabled ReflectionTests).
             | Fable.MetaType -> transformAnyType com ctx
+            | Fable.Number(_, Fable.NumberInfo.IsEnum entRef) -> transformEntityType com ctx entRef []
             | Fable.Number(kind, _) -> transformNumberType com ctx kind
             | Fable.LambdaType(argType, returnType) ->
                 let argTypes, returnType = ([ argType ], returnType)
@@ -2012,6 +2013,29 @@ module Util =
 
             mkFloat64LitExpr (string<float> 0.)
 
+    let tryMakeEnumValue (com: IRustCompiler) ctx entRef value =
+        let isMatchingLiteral (literalValue: obj option) =
+            match value, literalValue with
+            | Fable.NumberValue.Int8 value, Some(:? sbyte as literal) -> value = literal
+            | Fable.NumberValue.UInt8 value, Some(:? byte as literal) -> value = literal
+            | Fable.NumberValue.Int16 value, Some(:? int16 as literal) -> value = literal
+            | Fable.NumberValue.UInt16 value, Some(:? uint16 as literal) -> value = literal
+            | Fable.NumberValue.Int32 value, Some(:? int32 as literal) -> value = literal
+            | Fable.NumberValue.UInt32 value, Some(:? uint32 as literal) -> value = literal
+            | Fable.NumberValue.Int64 value, Some(:? int64 as literal) -> value = literal
+            | Fable.NumberValue.UInt64 value, Some(:? uint64 as literal) -> value = literal
+            | _ -> false
+
+        let ent = com.GetEntity(entRef)
+
+        ent.FSharpFields
+        |> List.tryFind (fun field -> isMatchingLiteral field.LiteralValue)
+        |> Option.map (fun field ->
+            let enumName = getEntityFullName com ctx entRef
+            let path = enumName + "::" + sanitizeMember field.Name
+            makeFullNamePathExpr path None
+        )
+
     let makeStaticString com ctx (value: Rust.Expr) =
         makeLibCall com ctx None "String" "string" [ value ]
 
@@ -2384,6 +2408,9 @@ module Util =
         | Fable.CharConstant c -> mkCharLitExpr c //, ?loc=r)
         | Fable.StringConstant s -> mkStrLitExpr s |> makeStaticString com ctx
         | Fable.StringTemplate(_tag, parts, values) -> makeStringTemplate com ctx parts values
+        | Fable.NumberConstant(x, Fable.NumberInfo.IsEnum entRef) ->
+            tryMakeEnumValue com ctx entRef x
+            |> Option.defaultWith (fun () -> makeNumber com ctx r value.Type x)
         | Fable.NumberConstant(x, _) -> makeNumber com ctx r value.Type x
         | Fable.RegexConstant(source, flags) ->
             // Expression.regExpLiteral(source, flags, ?loc=r)
@@ -5108,6 +5135,74 @@ module Util =
         let tyItem = mkTyAliasItem attrs entName ty generics bounds
         [ tyItem ]
 
+    let transformEnum (com: IRustCompiler) ctx (ent: Fable.Entity) (decl: Fable.ClassDecl) =
+        let entName = Fable.Naming.splitLast ent.FullName
+        let genArgs = FSharp2Fable.Util.getEntityGenArgs ent
+        let generics = makeGenerics com ctx genArgs
+
+        let underlyingType =
+            ent.FSharpFields
+            |> List.tryFind (fun field -> field.Name = "value__")
+            |> Option.map (fun field -> field.FieldType)
+            |> Option.defaultValue (Fable.Number(NumberKind.Int32, Fable.NumberInfo.Empty))
+
+        let enumKind =
+            match underlyingType with
+            | Fable.Number(kind, _) -> kind
+            | _ -> failwithf "Expected an integral underlying type for enum %s" ent.FullName
+
+        let reprName =
+            match enumKind with
+            | NumberKind.Int8 -> "i8"
+            | NumberKind.UInt8 -> "u8"
+            | NumberKind.Int16 -> "i16"
+            | NumberKind.UInt16 -> "u16"
+            | NumberKind.Int32 -> "i32"
+            | NumberKind.UInt32 -> "u32"
+            | NumberKind.Int64 -> "i64"
+            | NumberKind.UInt64 -> "u64"
+            | _ -> failwithf "Unsupported underlying type for enum %s: %A" ent.FullName enumKind
+
+        let makeNumberValue (value: obj) =
+            match enumKind with
+            | NumberKind.Int8 -> Fable.NumberValue.Int8(Convert.ToSByte(value))
+            | NumberKind.UInt8 -> Fable.NumberValue.UInt8(Convert.ToByte(value))
+            | NumberKind.Int16 -> Fable.NumberValue.Int16(Convert.ToInt16(value))
+            | NumberKind.UInt16 -> Fable.NumberValue.UInt16(Convert.ToUInt16(value))
+            | NumberKind.Int32 -> Fable.NumberValue.Int32(Convert.ToInt32(value))
+            | NumberKind.UInt32 -> Fable.NumberValue.UInt32(Convert.ToUInt32(value))
+            | NumberKind.Int64 -> Fable.NumberValue.Int64(Convert.ToInt64(value))
+            | NumberKind.UInt64 -> Fable.NumberValue.UInt64(Convert.ToUInt64(value))
+            | _ -> failwithf "Unsupported underlying type for enum %s: %A" ent.FullName enumKind
+
+        let variants =
+            ent.FSharpFields
+            |> List.choose (fun field ->
+                if field.Name = "value__" then
+                    None
+                else
+                    field.LiteralValue
+                    |> Option.map (fun value ->
+                        let disrExpr = makeNumber com ctx None underlyingType (makeNumberValue value)
+                        let variant = mkUnitVariant [] (sanitizeMember field.Name)
+                        { variant with disr_expr = Some(mkAnonConst disrExpr) }
+                    )
+            )
+
+
+        let attrs = transformAttributes com ctx ent.Attributes decl.XmlDoc
+
+        // let derived =
+        //     makeDerivedFrom com ctx ent
+        //     |> List.filter (fun name -> name <> rawIdent "Default")
+        //     |> List.append [ rawIdent "Copy" ]
+
+        // let attrs = attrs @ [ mkAttr "repr" [ reprName ]; mkAttr "derive" derived ]
+        let attrs = attrs @ [ mkAttr "bitmask_enum::bitmask" [ reprName ] ]
+        let enumItem = mkEnumItem attrs entName variants generics
+        let displayImpls = makeDisplayTraitImpls com ctx entName genArgs true false false
+        enumItem :: displayImpls
+
     let transformUnion (com: IRustCompiler) ctx (ent: Fable.Entity) (decl: Fable.ClassDecl) =
         let entName = Fable.Naming.splitLast ent.FullName
         let genArgs = FSharp2Fable.Util.getEntityGenArgs ent
@@ -5454,7 +5549,7 @@ module Util =
             [ implItem ]
         | _ -> []
 
-    let makeDisplayTraitImpls com ctx entName genArgs hasToString hasDebug =
+    let makeDisplayTraitImpls com ctx entName genArgs isEnum hasToString hasDebug =
         // expected output:
         // impl core::fmt::Display for {self_ty} {
         //     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
@@ -5462,7 +5557,9 @@ module Util =
         //     }
         // }
         let bodyStmt =
-            if hasToString then
+            if isEnum then
+                "write!(f, \"{:?}\", self)"
+            elif hasToString then
                 "write!(f, \"{}\", self.ToString_())"
             else
                 "write!(f, \"{}\", core::any::type_name::<Self>())"
@@ -5917,7 +6014,7 @@ module Util =
                 nonInterfaceMembers |> List.exists (fun (d, m) -> m.CompiledName = "ToString")
 
             let hasDebug = isObjectExpr || not (List.isEmpty ent.GenericParameters)
-            makeDisplayTraitImpls com ctx entName genParams hasToString hasDebug
+            makeDisplayTraitImpls com ctx entName genParams false hasToString hasDebug
 
         let operatorTraitImpls =
             nonInterfaceMembers |> makeOpTraitImpls com ctx ent entName genArgs
@@ -5990,7 +6087,13 @@ module Util =
     let transformClassDecl (com: IRustCompiler) ctx (decl: Fable.ClassDecl) =
         let ent = com.GetEntity(decl.Entity)
 
-        if ent.IsFSharpAbbreviation then
+        if ent.IsEnum then
+            let enumItems = transformEnum com ctx ent decl
+
+            match enumItems with
+            | enumItem :: rest -> entityItemWithVis com ctx ent enumItem :: rest
+            | [] -> []
+        elif ent.IsFSharpAbbreviation then
             transformAbbrev com ctx ent decl
         elif ent.IsInterface then
             transformInterface com ctx ent decl
