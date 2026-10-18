@@ -79,120 +79,148 @@ type Person =
     { First: string
       Last: string }
 
-let tests =
-    testList
-        "Nullable"
-        [
-            testCase "Lists of nullable records works" <| fun () ->
-                let args: (Person | null) list =
-                    [
-                        { First = "A"; Last = "B" }
-                        null
-                        { First = "C"; Last = "D" }
-                        { First = "E"; Last = "F" }
-                        null
-                    ]
-                let nullCount = args |> List.filter isNull |> List.length
-                nullCount |> equal 2
+module Nullable =
+    [<Fact>]
+    let ``Lists of nullable records works`` () =
+        let args: (Person | null) list =
+            [
+                { First = "A"; Last = "B" }
+                null
+                { First = "C"; Last = "D" }
+                { First = "E"; Last = "F" }
+                null
+            ]
+        let nullCount = args |> List.filter isNull |> List.length
+        nullCount |> equal 2
 
-            testCase "Lists of nullable strings works" <| fun () ->
-                let args: (string | null * bool) list =
-                    [
-                        ("", true)
-                        (null, true)
-                        ("test", false)
-                        (" \t", true)
-                        (null, false)
-                    ]
-                let nullCount = args |> List.filter (fst >> isNull) |> List.length
-                nullCount |> equal 2
+    [<Fact>]
+    let ``Lists of nullable strings works`` () =
+        let args: (string | null * bool) list =
+            [
+                ("", true)
+                (null, true)
+                ("test", false)
+                (" \t", true)
+                (null, false)
+            ]
+        let nullCount = args |> List.filter (fst >> isNull) |> List.length
+        nullCount |> equal 2
 
-            testCase "Nullable integer value works" <| fun () ->
-                let i_null = System.Nullable<int>()
-                let i_five = System.Nullable(5)
-                i_null |> getNullableValueOrDefault |> equal 0
-                i_five |> getNullableValueOrDefault |> equal 5
-                i_five |> getNullableValue |> equal 5
-                i_five |> nonNullV |> equal 5
-                i_five |> isNullV |> equal false
-                i_null |> isNullV |> equal true
-                nullV<int> |> isNullV |> equal true
-                (withNullV 42).HasValue |> equal true
+    [<Fact>]
+    let ``Nullable integer value works`` () =
+        let i_null = System.Nullable<int>()
+        let i_five = System.Nullable(5)
+        i_null |> getNullableValueOrDefault |> equal 0
+        i_five |> getNullableValueOrDefault |> equal 5
+        i_five |> getNullableValue |> equal 5
+        i_five |> nonNullV |> equal 5
+        i_five |> isNullV |> equal false
+        i_null |> isNullV |> equal true
+        nullV<int> |> isNullV |> equal true
+        (withNullV 42).HasValue |> equal true
 
-            testCase "Nullable string length works" <| fun () ->
-                handleString1 "abc" |> equal 3
-                handleString1 null |> equal 0
-                handleString2 "abc" |> equal 3
-                handleString2 null |> equal 0
+    [<Fact>]
+    let ``Nullable string length works`` () =
+        handleString1 "abc" |> equal 3
+        handleString1 null |> equal 0
+        handleString2 "abc" |> equal 3
+        handleString2 null |> equal 0
 
-            testCase "Nullable string union works" <| fun () ->
-                A |> handleUnion |> equal 0
-                B null |> handleUnion |> equal 0
-                B "cd" |> handleUnion |> equal 2
+    [<Fact>]
+    let ``Nullable string union works`` () =
+        A |> handleUnion |> equal 0
+        B null |> handleUnion |> equal 0
+        B "cd" |> handleUnion |> equal 2
 
-            testCase "Nullable string check works" <| fun () ->
-                argValidateShadowing "ABC" |> equal 3
-                argValidateShadowing2 "ABC" |> equal 3
-                automaticValidationViaActivePattern "ABC" |> equal 3
+    [<Fact>]
+    let ``Nullable string check works`` () =
+        argValidateShadowing "ABC" |> equal 3
+        argValidateShadowing2 "ABC" |> equal 3
+        automaticValidationViaActivePattern "ABC" |> equal 3
 
-            testCase "Nullable string to option works" <| fun () ->
-                handleString3 "abc" |> Option.isSome |> equal true
-                handleString3 null |> Option.isSome |> equal false
+    [<Fact>]
+    let ``Nullable string to option works`` () =
+        handleString3 "abc" |> Option.isSome |> equal true
+        handleString3 null |> Option.isSome |> equal false
 
-            testCase "Nullable pattern matching works" <| fun () ->
-                getStringLengthSafe "abc" |> equal 3
-                getStringLengthSafe null |> equal -1
-                getStringLengthSafe "" |> equal -1
+    [<Fact>]
+    let ``Nullable pattern matching works`` () =
+        getStringLengthSafe "abc" |> equal 3
+        getStringLengthSafe null |> equal -1
+        getStringLengthSafe "" |> equal -1
 
-            testCase "Nullable type inferrence works" <| fun () ->
-                getList() |> isNull |> equal false
-                getList() |> nonNull |> List.length |> equal 2
-                processNullableList [2;3] |> List.length |> equal 2
-                processNullableList [1;2] |> List.sum |> equal 5
-                processNullString "abc" |> equal 3
-                processNullString null |> equal 0
+    [<Fact>]
+    let ``Nullable type inferrence works`` () =
+        getList() |> isNull |> equal false
+        getList() |> nonNull |> List.length |> equal 2
+        processNullableList [2;3] |> List.length |> equal 2
+        processNullableList [1;2] |> List.sum |> equal 5
+        processNullString "abc" |> equal 3
+        processNullString null |> equal 0
 
-            testCase "nullArgCheck works" <| fun () ->
-                nullArgCheck "arg" "ABC" |> equal "ABC"
-                throwsAnyError (fun () -> nullArgCheck<string> "arg" null)
+    [<Fact>]
+    let ``nullArgCheck works`` () =
+        nullArgCheck "arg" "ABC" |> equal "ABC"
+        throwsAnyError (fun () -> nullArgCheck<string> "arg" null)
 
-            testCase "Null active pattern works" <| fun () ->
-                let getLength abnull =
-                    match abnull with
-                    | A -> 0
-                    | B Null -> 0
-                    | B(NonNull s) -> s.Length // `s` is derived to be `string`
+    [<Fact>]
+    let ``Null active pattern works`` () =
+        let getLength abnull =
+            match abnull with
+            | A -> 0
+            | B Null -> 0
+            | B(NonNull s) -> s.Length // `s` is derived to be `string`
 
-                equal (getLength A) 0
-                equal (getLength (B null)) 0
+        equal (getLength A) 0
+        equal (getLength (B null)) 0
 
-            testCase "NonNull active pattern works" <| fun () ->
-                let getLength abnull =
-                    match abnull with
-                    | A -> 0
-                    | B Null -> 0
-                    | B(NonNull s) -> s.Length // `s` is derived to be `string`
+    [<Fact>]
+    let ``NonNull active pattern works`` () =
+        let getLength abnull =
+            match abnull with
+            | A -> 0
+            | B Null -> 0
+            | B(NonNull s) -> s.Length // `s` is derived to be `string`
 
-                equal (getLength (B "hello")) 5
+        equal (getLength (B "hello")) 5
 
-            testCase "Nullness works with generics" <| fun () ->
-                // Generic code, note 'T must be constrained to be a reference type
-                let findOrNull (index: int) (list: 'T list) : 'T | null when 'T: not struct =
-                    match List.tryItem index list with
-                    | Some item -> item
-                    | None -> null
+    [<Fact>]
+    let ``Nullness works with generics`` () =
+        // Generic code, note 'T must be constrained to be a reference type
+        let findOrNull (index: int) (list: 'T list) : 'T | null when 'T: not struct =
+            match List.tryItem index list with
+            | Some item -> item
+            | None -> null
 
-                equal (findOrNull 1 [ "a"; "b"; "c" ]) "b"
-                equal (findOrNull 3 [ "a"; "b"; "c" ]) null
+        equal (findOrNull 1 [ "a"; "b"; "c" ]) "b"
+        equal (findOrNull 3 [ "a"; "b"; "c" ]) null
 
-            testCase "Unchecked.nonNull works" <| fun () ->
-                let toUpper (text: string | null) =
-                    (Unchecked.nonNull text).ToUpperInvariant()
+    [<Fact>]
+    let ``Unchecked.nonNull works`` () =
+        let toUpper (text: string | null) =
+            (Unchecked.nonNull text).ToUpperInvariant()
 
-                equal (toUpper "hello") "HELLO"
+        equal (toUpper "hello") "HELLO"
+
+    let tests() =
+        ``Lists of nullable records works`` ()
+        ``Lists of nullable strings works`` ()
+        ``Nullable integer value works`` ()
+        ``Nullable string length works`` ()
+        ``Nullable string union works`` ()
+        ``Nullable string check works`` ()
+        ``Nullable string to option works`` ()
+        ``Nullable pattern matching works`` ()
+        ``Nullable type inferrence works`` ()
+        ``nullArgCheck works`` ()
+        ``Null active pattern works`` ()
+        ``NonNull active pattern works`` ()
+        ``Nullness works with generics`` ()
+        ``Unchecked.nonNull works`` ()
 
 // #if FABLE_COMPILER
-//             testCase "Nullness works for interop with undefined" <| fun () ->
+//             [<Fact>]
+//             let ``Nullness works for interop with undefined`` () =
 //                 let maybeUndefined (value: string) : (string | null) = importMember "./js/nullness.js"
 
 //                 match maybeUndefined "ok" with
@@ -203,7 +231,8 @@ let tests =
 //                 | NonNull _ -> equal true false
 //                 | Null -> equal true true
 
-//             testCase "Nullness works for interop with null" <| fun () ->
+//             [<Fact>]
+//             let ``Nullness works for interop with null`` () =
 //                 let maybeNull (value: string) : (string | null) = importMember "./js/nullness.js"
 
 //                 match maybeNull "ok" with
@@ -214,4 +243,6 @@ let tests =
 //                 | NonNull _ -> equal true false
 //                 | Null -> equal true true
 // #endif
-        ]
+
+let tests() =
+    Nullable.tests()

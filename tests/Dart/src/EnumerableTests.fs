@@ -46,20 +46,26 @@ let mkEnumerable someList =
     Enumerable.Create(fun () ->
         (someList :> IEnumerable<_>).GetEnumerator())
 
+[<Fact>]
+let ``Enumerable class works`` () =
+    let f1 = Seq.toArray (fib())
+    let f2 = Seq.toArray (Enumerable.Create(fun () -> upcast new Fibonacci()))
+    f1 = f2 |> equal true
+
+// TODO Object expr
+// [<Fact>]
+// let ``Enumerable object expr works`` () =
+//     let f1 = Seq.toArray (fib())
+//     let f2 = Seq.toArray (toSeq fibGen)
+//     f1 = f2 |> equal true
+
+[<Fact>]
+let ``.NET Enumerator can be converted to JS iterator back and forth`` () =
+    mkEnumerable [1..10]
+    |> Seq.toList
+    |> List.sum
+    |> equal 55
+
 let tests() =
-    testCase "Enumerable class works" <| fun () ->
-        let f1 = Seq.toArray (fib())
-        let f2 = Seq.toArray (Enumerable.Create(fun () -> upcast new Fibonacci()))
-        f1 = f2 |> equal true
-
-    // TODO Object expr
-    // testCase "Enumerable object expr works" <| fun () ->
-    //     let f1 = Seq.toArray (fib())
-    //     let f2 = Seq.toArray (toSeq fibGen)
-    //     f1 = f2 |> equal true
-
-    testCase ".NET Enumerator can be converted to JS iterator back and forth" <| fun () ->
-        mkEnumerable [1..10]
-        |> Seq.toList
-        |> List.sum
-        |> equal 55
+    ``Enumerable class works`` ()
+    ``.NET Enumerator can be converted to JS iterator back and forth`` ()

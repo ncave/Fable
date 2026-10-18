@@ -34,132 +34,140 @@ let sleepAndAssign token (res: bool ref) =
         token
     )
 
-let tests () =
-    testCase "Simple async translates without exception"
-    <| fun () -> async { return () } |> Async.StartImmediate
+[<Fact>]
+let ``Simple async translates without exception`` () =
+    async { return () } |> Async.StartImmediate
 
-    testCase "Async while binding works correctly"
-    <| fun () ->
-        let mutable result = 0
+[<Fact>]
+let ``Async while binding works correctly`` () =
+    let mutable result = 0
 
+    async {
+        while result < 10 do
+            result <- result + 1
+    }
+    |> Async.StartImmediate
+
+    equal 10 result
+
+[<Fact>]
+let ``Async for binding works correctly`` () =
+    let inputs = [| 1; 2; 3 |]
+    let mutable result = 0
+
+    async {
+        for inp in inputs do
+            result <- result + inp
+    }
+    |> Async.StartImmediate
+
+    equal 6 result
+
+[<Fact>]
+let ``Async exceptions are handled correctly`` () =
+    let mutable result = 0
+
+    let f shouldThrow =
         async {
-            while result < 10 do
-                result <- result + 1
+            try
+                if shouldThrow then
+                    failwith "boom!"
+                else
+                    result <- 12
+            with _ ->
+                result <- 10
         }
         |> Async.StartImmediate
 
-        equal 10 result
+        result
 
-    testCase "Async for binding works correctly"
-    <| fun () ->
-        let inputs = [| 1; 2; 3 |]
-        let mutable result = 0
+    f true + f false |> equal 22
 
+[<Fact>]
+let ``Non captured exception in async is propagated when using Async.StartImmediate`` () =
+    throwsAnyError (fun () -> async { failwith "boom!" } |> Async.StartImmediate)
+
+// Behaviour of Async.Start is the same as Async.StartImmediate in Dart
+
+#if FABLE_COMPILER
+[<Fact>]
+#else
+[<Fact(Skip = "Dart target-specific behavior.")>]
+#endif
+let ``Non captured exception in async is propagated when using Async.Start`` () =
+    throwsAnyError (fun () -> async { failwith "boom!" } |> Async.Start)
+
+[<Fact>]
+let ``Simple async is executed correctly`` () =
+    let mutable result = false
+    let x = async { return 99 }
+
+    async {
+        let! x = x
+        let y = 99
+        result <- x = y
+    }
+    |> Async.StartImmediate
+
+    equal true result
+
+[<Fact>]
+let ``async use statements should dispose of resources when they go out of scope`` () =
+    let mutable isDisposed = false
+    let mutable step1ok = false
+    let mutable step2ok = false
+
+    let resource = async { return new DisposableAction(fun () -> isDisposed <- true) }
+
+    async {
+        use! _r = resource
+        step1ok <- not isDisposed
+    }
+    |> Async.StartImmediate
+
+    step2ok <- isDisposed
+
+    (step1ok && step2ok) |> equal true
+
+[<Fact>]
+let ``Try ... with ... expressions inside async expressions work the same`` () =
+    let mutable result = ""
+
+    let throw () : unit = raise (exn "Boo!")
+
+    let append x = result <- result + x
+
+    let innerAsync () =
         async {
-            for inp in inputs do
-                result <- result + inp
-        }
-        |> Async.StartImmediate
-
-        equal 6 result
-
-    testCase "Async exceptions are handled correctly"
-    <| fun () ->
-        let mutable result = 0
-
-        let f shouldThrow =
-            async {
-                try
-                    if shouldThrow then
-                        failwith "boom!"
-                    else
-                        result <- 12
-                with _ ->
-                    result <- 10
-            }
-            |> Async.StartImmediate
-
-            result
-
-        f true + f false |> equal 22
-
-    testCase "Non captured exception in async is propagated when using Async.StartImmediate"
-    <| fun () -> throwsAnyError (fun () -> async { failwith "boom!" } |> Async.StartImmediate)
-
-    // Behaviour of Async.Start is the same as Async.StartImmediate in Dart
-    testCase "Non captured exception in async is propagated when using Async.Start"
-    <| fun () -> throwsAnyError (fun () -> async { failwith "boom!" } |> Async.Start)
-
-    testCase "Simple async is executed correctly"
-    <| fun () ->
-        let mutable result = false
-        let x = async { return 99 }
-
-        async {
-            let! x = x
-            let y = 99
-            result <- x = y
-        }
-        |> Async.StartImmediate
-
-        equal true result
-
-    testCase "async use statements should dispose of resources when they go out of scope"
-    <| fun () ->
-        let mutable isDisposed = false
-        let mutable step1ok = false
-        let mutable step2ok = false
-
-        let resource = async { return new DisposableAction(fun () -> isDisposed <- true) }
-
-        async {
-            use! _r = resource
-            step1ok <- not isDisposed
-        }
-        |> Async.StartImmediate
-
-        step2ok <- isDisposed
-
-        (step1ok && step2ok) |> equal true
-
-    testCase "Try ... with ... expressions inside async expressions work the same"
-    <| fun () ->
-        let mutable result = ""
-
-        let throw () : unit = raise (exn "Boo!")
-
-        let append x = result <- result + x
-
-        let innerAsync () =
-            async {
-                append "b"
-
-                try
-                    append "c"
-                    throw ()
-                    append "1"
-                with _ ->
-                    append "d"
-
-                append "e"
-            }
-
-        async {
-            append "a"
+            append "b"
 
             try
-                do! innerAsync ()
+                append "c"
+                throw ()
+                append "1"
             with _ ->
-                append "2"
+                append "d"
 
-            append "f"
+            append "e"
         }
-        |> Async.StartImmediate
 
-        equal "abcdef" result
+    async {
+        append "a"
 
-    testCaseAsync "Async cancellation works"
-    <| fun () ->
+        try
+            do! innerAsync ()
+        with _ ->
+            append "2"
+
+        append "f"
+    }
+    |> Async.StartImmediate
+
+    equal "abcdef" result
+
+[<Fact>]
+let ``Async cancellation works`` () =
+    runAsyncTest <| fun () ->
         async {
             let res1, res2, res3 = ref false, ref false, ref false
             let tcs1 = new System.Threading.CancellationTokenSource(50)
@@ -176,8 +184,9 @@ let tests () =
             equal true res3.Value
         }
 
-    testCaseAsync "CancellationTokenSource.Register works"
-    <| fun () ->
+[<Fact>]
+let ``CancellationTokenSource.Register works`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable x = 0
             let res1 = ref false
@@ -189,8 +198,9 @@ let tests () =
             equal 1 x
         }
 
-    testCaseAsync "CancellationToken can be disposed"
-    <| fun () -> // See #2879
+[<Fact>]
+let ``CancellationToken can be disposed`` () =
+    runAsyncTest <| fun () -> // See #2879
         async {
             let res1 = ref false
 
@@ -203,53 +213,54 @@ let tests () =
             equal true res1.Value
         }
 
-    testCase "Async.StartWithContinuations works"
-    <| fun () ->
-        let mutable res1 = ""
-        let mutable res2 = ""
-        let mutable res3 = ""
-        Async.StartWithContinuations(successWork, (fun x -> res1 <- x), ignore, ignore)
-        Async.StartWithContinuations(errorWork, ignore, (fun x -> res2 <- x.Message), ignore)
-        Async.StartWithContinuations(cancelWork, ignore, ignore, (fun x -> res3 <- x.Message))
-        equal "success" res1
-        equal "error" res2
-        equal "cancelled" res3
+[<Fact>]
+let ``Async.StartWithContinuations works`` () =
+    let mutable res1 = ""
+    let mutable res2 = ""
+    let mutable res3 = ""
+    Async.StartWithContinuations(successWork, (fun x -> res1 <- x), ignore, ignore)
+    Async.StartWithContinuations(errorWork, ignore, (fun x -> res2 <- x.Message), ignore)
+    Async.StartWithContinuations(cancelWork, ignore, ignore, (fun x -> res3 <- x.Message))
+    equal "success" res1
+    equal "error" res2
+    equal "cancelled" res3
 
-    testCase "Async.Catch works"
-    <| fun () ->
-        let mutable res1 = ""
-        let mutable res2 = ""
+[<Fact>]
+let ``Async.Catch works`` () =
+    let mutable res1 = ""
+    let mutable res2 = ""
 
-        let assign =
-            function
-            | Choice1Of2 msg -> msg
-            | Choice2Of2(ex: Exception) -> "ERROR: " + ex.Message
+    let assign =
+        function
+        | Choice1Of2 msg -> msg
+        | Choice2Of2(ex: Exception) -> "ERROR: " + ex.Message
 
-        async {
-            let! x1 = successWork |> Async.Catch
-            res1 <- assign x1
-            let! x2 = errorWork |> Async.Catch
-            res2 <- assign x2
-        }
-        |> Async.StartImmediate
+    async {
+        let! x1 = successWork |> Async.Catch
+        res1 <- assign x1
+        let! x2 = errorWork |> Async.Catch
+        res2 <- assign x2
+    }
+    |> Async.StartImmediate
 
-        equal "success" res1
-        equal "ERROR: error" res2
+    equal "success" res1
+    equal "ERROR: error" res2
 
-    testCase "Async.Ignore works"
-    <| fun () ->
-        let mutable res = false
+[<Fact>]
+let ``Async.Ignore works`` () =
+    let mutable res = false
 
-        async {
-            do! successWork |> Async.Ignore
-            res <- true
-        }
-        |> Async.StartImmediate
+    async {
+        do! successWork |> Async.Ignore
+        res <- true
+    }
+    |> Async.StartImmediate
 
-        equal true res
+    equal true res
 
-    testCaseAsync "Async.Parallel works"
-    <| fun () ->
+[<Fact>]
+let ``Async.Parallel works`` () =
+    runAsyncTest <| fun () ->
         async {
             let makeWork i =
                 async {
@@ -270,8 +281,9 @@ let tests () =
             res |> Array.sum |> equal 6
         }
 
-    testCaseAsync "Async.Parallel is lazy"
-    <| fun () ->
+[<Fact>]
+let ``Async.Parallel is lazy`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable x = 0
 
@@ -288,8 +300,9 @@ let tests () =
             equal 3 x
         }
 
-    testCaseAsync "Async.Sequential works"
-    <| fun () ->
+[<Fact>]
+let ``Async.Sequential works`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable aggregate = 0
 
@@ -311,8 +324,9 @@ let tests () =
             result |> Array.sum |> equal aggregate
         }
 
-    testCaseAsync "Async.Sequential is lazy"
-    <| fun () ->
+[<Fact>]
+let ``Async.Sequential is lazy`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable x = 0
 
@@ -327,8 +341,14 @@ let tests () =
             equal 3 x
         }
 
-    testCaseAsync "Interaction between Async and Future works"
-    <| fun () ->
+
+#if FABLE_COMPILER
+[<Fact>]
+#else
+[<Fact(Skip = "Dart target-specific behavior.")>]
+#endif
+let ``Interaction between Async and Future works`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable res = false
 
@@ -340,8 +360,14 @@ let tests () =
             equal true res
         }
 
-    testCaseAsync "Futures can be cancelled"
-    <| fun () ->
+
+#if FABLE_COMPILER
+[<Fact>]
+#else
+[<Fact(Skip = "Dart target-specific behavior.")>]
+#endif
+let ``Futures can be cancelled`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable res = 0
             let tcs = new System.Threading.CancellationTokenSource(50)
@@ -360,8 +386,14 @@ let tests () =
             equal 1 res
         }
 
-    testCaseAsync "Async.AwaitFuture propagates Future errors"
-    <| fun () ->
+
+#if FABLE_COMPILER
+[<Fact>]
+#else
+[<Fact(Skip = "Dart target-specific behavior.")>]
+#endif
+let ``Async.AwaitFuture propagates Future errors`` () =
+    runAsyncTest <| fun () ->
         async {
             let future =
                 async {
@@ -381,23 +413,24 @@ let tests () =
             equal "boom" message
         }
 
-    testCase "Async try .. with returns correctly from 'with' branch"
-    <| fun () ->
-        let work =
-            async {
-                try
-                    failwith "testing"
-                    return -1
-                with e ->
-                    return 42
-            }
+[<Fact>]
+let ``Async try .. with returns correctly from _u27_with_u27_ branch`` () =
+    let work =
+        async {
+            try
+                failwith "testing"
+                return -1
+            with e ->
+                return 42
+        }
 
-        let mutable result = 0
-        Async.StartWithContinuations(work, (fun r -> result <- r), ignore, ignore)
-        equal 42 result
+    let mutable result = 0
+    Async.StartWithContinuations(work, (fun r -> result <- r), ignore, ignore)
+    equal 42 result
 
-    testCaseAsync "Deep recursion with async doesn't cause stack overflow"
-    <| fun () ->
+[<Fact>]
+let ``Deep recursion with async doesn_u27_t cause stack overflow`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable result = false
 
@@ -413,8 +446,9 @@ let tests () =
             equal true result
         }
 
-    testCaseAsync "Nested failure propagates in async expressions"
-    <| fun () ->
+[<Fact>]
+let ``Nested failure propagates in async expressions`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable data = ""
 
@@ -450,8 +484,9 @@ let tests () =
             equal "3 2 1" data
         }
 
-    testCaseAsync "Try .. finally expressions inside async expressions work"
-    <| fun () ->
+[<Fact>]
+let ``Try .. finally expressions inside async expressions work`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable data = ""
 
@@ -478,8 +513,9 @@ let tests () =
             equal "1 2 3" data
         }
 
-    testCaseAsync "Final statement inside async expressions can throw"
-    <| fun () ->
+[<Fact>]
+let ``Final statement inside async expressions can throw`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable data = ""
 
@@ -504,8 +540,9 @@ let tests () =
             equal "1 boom!" data
         }
 
-    testCaseAsync "Async.Bind propagates exceptions"
-    <| fun () -> // See #724
+[<Fact>]
+let ``Async.Bind propagates exceptions`` () =
+    runAsyncTest <| fun () -> // See #724
         async {
             let task1 name =
                 async {
@@ -548,8 +585,9 @@ let tests () =
             equal ("Ok", "Invalid access credentials") res2
         }
 
-    testCaseAsync "Async.StartChild works"
-    <| fun () ->
+[<Fact>]
+let ``Async.StartChild works`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable x = ""
 
@@ -576,8 +614,9 @@ let tests () =
             equal "ABCDEF" x
         }
 
-    testCaseAsync "Async.StartChild applies timeout"
-    <| fun () ->
+[<Fact>]
+let ``Async.StartChild applies timeout`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable x = ""
 
@@ -600,8 +639,9 @@ let tests () =
             equal "ABC" x
         }
 
-    testCaseAsync "Async.StartChild with timeout completes when computation finishes before timeout"
-    <| fun () -> // See #4481
+[<Fact>]
+let ``Async.StartChild with timeout completes when computation finishes before timeout`` () =
+    runAsyncTest <| fun () -> // See #4481
         async {
             let fast = async { do! Async.Sleep 10 }
 
@@ -613,8 +653,9 @@ let tests () =
                 failwith "should not time out"
         }
 
-    testCaseAsync "Unit arguments are erased"
-    <| fun () -> // See #1832
+[<Fact>]
+let ``Unit arguments are erased`` () =
+    runAsyncTest <| fun () -> // See #1832
         let mutable token = 0
 
         async {
@@ -623,8 +664,9 @@ let tests () =
             res
         }
 
-    testCaseAsync "Can use custom exceptions in async workflows #2396"
-    <| fun () ->
+[<Fact>]
+let ``Can use custom exceptions in async workflows _u23_2396`` () =
+    runAsyncTest <| fun () ->
         let workflow () : Async<unit> = async { return MyException(7) |> raise }
 
         let parentWorkflow () =
@@ -641,47 +683,48 @@ let tests () =
             equal 7 res
         }
 
-    testCase "Async try .. with does not run 'with' branch when body succeeds"
-    <| fun () ->
-        let work =
-            async {
-                try
-                    return 1
-                with _ ->
-                    return 99
-            }
+[<Fact>]
+let ``Async try .. with does not run _u27_with_u27_ branch when body succeeds`` () =
+    let work =
+        async {
+            try
+                return 1
+            with _ ->
+                return 99
+        }
 
-        let mutable result = 0
-        Async.StartWithContinuations(work, (fun r -> result <- r), ignore, ignore)
-        equal 1 result
+    let mutable result = 0
+    Async.StartWithContinuations(work, (fun r -> result <- r), ignore, ignore)
+    equal 1 result
 
-    testCase "Exception thrown by the continuation is not redirected to the 'with' branch"
-    <| fun () ->
-        let work =
-            async {
-                try
-                    return 1
-                with _ ->
-                    return 99
-            }
+[<Fact>]
+let ``Exception thrown by the continuation is not redirected to the _u27_with_u27_ branch`` () =
+    let work =
+        async {
+            try
+                return 1
+            with _ ->
+                return 99
+        }
 
-        let mutable calls = 0
+    let mutable calls = 0
 
-        throwsAnyError (fun () ->
-            Async.StartWithContinuations(
-                work,
-                (fun _ ->
-                    calls <- calls + 1
-                    failwith "boom from continuation"),
-                ignore,
-                ignore
-            )
+    throwsAnyError (fun () ->
+        Async.StartWithContinuations(
+            work,
+            (fun _ ->
+                calls <- calls + 1
+                failwith "boom from continuation"),
+            ignore,
+            ignore
         )
+    )
 
-        equal 1 calls
+    equal 1 calls
 
-    testCaseAsync "Async.StartChild cancels the child when the parent's token is cancelled"
-    <| fun () ->
+[<Fact>]
+let ``Async.StartChild cancels the child when the parent_u27_s token is cancelled`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable finallyRan = false
             let mutable completed = false
@@ -710,8 +753,9 @@ let tests () =
             equal false completed
         }
 
-    testCaseAsync "Async.Parallel children are cancelled when the parent's token is cancelled"
-    <| fun () ->
+[<Fact>]
+let ``Async.Parallel children are cancelled when the parent_u27_s token is cancelled`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable completed = 0
             let cts = new System.Threading.CancellationTokenSource()
@@ -735,8 +779,9 @@ let tests () =
             equal 0 completed
         }
 
-    testCaseAsync "Async.Sequential children are cancelled when the parent's token is cancelled"
-    <| fun () ->
+[<Fact>]
+let ``Async.Sequential children are cancelled when the parent_u27_s token is cancelled`` () =
+    runAsyncTest <| fun () ->
         async {
             let mutable completed = 0
             let cts = new System.Threading.CancellationTokenSource()
@@ -760,67 +805,68 @@ let tests () =
             equal 0 completed
         }
 
-    testCase "CancellationTokenSource.Cancel invokes registrations only once"
-    <| fun () ->
-        let cts = new System.Threading.CancellationTokenSource()
-        let mutable calls = 0
+[<Fact>]
+let ``CancellationTokenSource.Cancel invokes registrations only once`` () =
+    let cts = new System.Threading.CancellationTokenSource()
+    let mutable calls = 0
 
-        cts.Token.Register(fun () -> calls <- calls + 1) |> ignore
+    cts.Token.Register(fun () -> calls <- calls + 1) |> ignore
 
-        cts.Cancel()
-        cts.Cancel()
+    cts.Cancel()
+    cts.Cancel()
 
-        equal 1 calls
+    equal 1 calls
 
-    testCase "CancellationToken registration can be disposed"
-    <| fun () ->
-        let cts = new System.Threading.CancellationTokenSource()
-        let mutable called = false
+[<Fact>]
+let ``CancellationToken registration can be disposed`` () =
+    let cts = new System.Threading.CancellationTokenSource()
+    let mutable called = false
 
-        let registration = cts.Token.Register(fun () -> called <- true)
+    let registration = cts.Token.Register(fun () -> called <- true)
 
-        registration.Dispose()
+    registration.Dispose()
 
-        cts.Cancel()
+    cts.Cancel()
 
-        equal false called
+    equal false called
 
-    testCase "CancellationToken registration after cancellation runs immediately"
-    <| fun () ->
-        let cts = new System.Threading.CancellationTokenSource()
-        let mutable called = false
+[<Fact>]
+let ``CancellationToken registration after cancellation runs immediately`` () =
+    let cts = new System.Threading.CancellationTokenSource()
+    let mutable called = false
 
-        cts.Cancel()
+    cts.Cancel()
 
-        cts.Token.Register(fun () -> called <- true) |> ignore
+    cts.Token.Register(fun () -> called <- true) |> ignore
 
-        equal true called
+    equal true called
 
-    testCase "ThrowIfCancellationRequested throws after cancellation"
-    <| fun () ->
-        let cts = new System.Threading.CancellationTokenSource()
+[<Fact>]
+let ``ThrowIfCancellationRequested throws after cancellation`` () =
+    let cts = new System.Threading.CancellationTokenSource()
 
-        // Does not throw before cancellation.
-        cts.Token.ThrowIfCancellationRequested()
+    // Does not throw before cancellation.
+    cts.Token.ThrowIfCancellationRequested()
 
-        cts.Cancel()
+    cts.Cancel()
 
-        throwsAnyError (fun () -> cts.Token.ThrowIfCancellationRequested())
+    throwsAnyError (fun () -> cts.Token.ThrowIfCancellationRequested())
 
-    testCase "Async.CancellationToken returns current cancellation token"
-    <| fun () ->
-        let cts = new System.Threading.CancellationTokenSource()
+[<Fact>]
+let ``Async.CancellationToken returns current cancellation token`` () =
+    let cts = new System.Threading.CancellationTokenSource()
 
-        let work =
-            async {
-                let! token = Async.CancellationToken
-                token = cts.Token |> equal true
-            }
+    let work =
+        async {
+            let! token = Async.CancellationToken
+            token = cts.Token |> equal true
+        }
 
-        Async.StartWithContinuations(work, ignore, raise, raise, cts.Token)
+    Async.StartWithContinuations(work, ignore, raise, raise, cts.Token)
 
-    testCaseAsync "CancellationTokenSource.CancelAfter can be reset"
-    <| fun () ->
+[<Fact>]
+let ``CancellationTokenSource.CancelAfter can be reset`` () =
+    runAsyncTest <| fun () ->
         async {
             let cts = new System.Threading.CancellationTokenSource()
 
@@ -836,3 +882,50 @@ let tests () =
 
             equal true cts.IsCancellationRequested
         }
+
+let tests () =
+    ``Simple async translates without exception`` ()
+    ``Async while binding works correctly`` ()
+    ``Async for binding works correctly`` ()
+    ``Async exceptions are handled correctly`` ()
+    ``Non captured exception in async is propagated when using Async.StartImmediate`` ()
+    ``Non captured exception in async is propagated when using Async.Start`` ()
+    ``Simple async is executed correctly`` ()
+    ``async use statements should dispose of resources when they go out of scope`` ()
+    ``Try ... with ... expressions inside async expressions work the same`` ()
+    ``Async cancellation works`` ()
+    ``CancellationTokenSource.Register works`` ()
+    ``CancellationToken can be disposed`` ()
+    ``Async.StartWithContinuations works`` ()
+    ``Async.Catch works`` ()
+    ``Async.Ignore works`` ()
+    ``Async.Parallel works`` ()
+    ``Async.Parallel is lazy`` ()
+    ``Async.Sequential works`` ()
+    ``Async.Sequential is lazy`` ()
+    ``Interaction between Async and Future works`` ()
+    ``Futures can be cancelled`` ()
+    ``Async.AwaitFuture propagates Future errors`` ()
+    ``Async try .. with returns correctly from _u27_with_u27_ branch`` ()
+    ``Deep recursion with async doesn_u27_t cause stack overflow`` ()
+    ``Nested failure propagates in async expressions`` ()
+    ``Try .. finally expressions inside async expressions work`` ()
+    ``Final statement inside async expressions can throw`` ()
+    ``Async.Bind propagates exceptions`` ()
+    ``Async.StartChild works`` ()
+    ``Async.StartChild applies timeout`` ()
+    ``Async.StartChild with timeout completes when computation finishes before timeout`` ()
+    ``Unit arguments are erased`` ()
+    ``Can use custom exceptions in async workflows _u23_2396`` ()
+    ``Async try .. with does not run _u27_with_u27_ branch when body succeeds`` ()
+    ``Exception thrown by the continuation is not redirected to the _u27_with_u27_ branch`` ()
+    ``Async.StartChild cancels the child when the parent_u27_s token is cancelled`` ()
+    ``Async.Parallel children are cancelled when the parent_u27_s token is cancelled`` ()
+    ``Async.Sequential children are cancelled when the parent_u27_s token is cancelled`` ()
+    ``CancellationTokenSource.Cancel invokes registrations only once`` ()
+    ``CancellationToken registration can be disposed`` ()
+    ``CancellationToken registration after cancellation runs immediately`` ()
+    ``ThrowIfCancellationRequested throws after cancellation`` ()
+    ``Async.CancellationToken returns current cancellation token`` ()
+    ``CancellationTokenSource.CancelAfter can be reset`` ()
+    ()

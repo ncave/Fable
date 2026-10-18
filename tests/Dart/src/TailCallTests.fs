@@ -158,100 +158,139 @@ module Elmish =
         let el: Element = view model (dispatch model)
         el.Activate()
 
+[<Fact>]
+let ``Recursive functions can be tailcall optimized`` () =
+    factorial1 1 10 |> equal 3628800
+
+[<Fact>]
+let ``Non-tailcall recursive functions work`` () =
+    factorial2 10 |> equal 3628800
+
+[<Fact>]
+let ``Nested functions can be tailcall optimized`` () =
+    factorial3 10 |> equal 3628800
+
+[<Fact>]
+let ``Arguments can be consumed after being _u22_passed_u22_ in tailcall optimizations`` () =
+    sum 0L 100000L 0L
+    |> equal 4999950000L
+
+[<Fact>]
+let ``Class methods can be tailcall optimized`` () =
+    let x = MyTailCall()
+    x.Sum(0L, 100000L, 0L)
+    |> equal 4999950000L
+
+[<Fact>]
+let ``Mutually recursive functions can be partially optimized`` () =
+   let s = "a5b6c"
+   s.ToCharArray() |> Seq.toList |> parseTokens []
+   |> Seq.concat |> Seq.map string |> String.concat ""
+   |> equal "56"
+
+[<Fact>]
+let ``IIFEs prevent tailcall optimization`` () =
+    // See #674
+    iife [5; 4; 3] |> equal 24
+
+[<Fact>]
+let ``Tailcall optimization doesn_u27_t cause endless loops`` () =
+    // See #675
+    One("a", 42)
+    |> tryFind "a"
+    |> equal (Some 42)
+    Tree<string, int>.Empty
+    |> tryFind "a"
+    |> equal None
+
+[<Fact>]
+let ``Recursive functions containing finally work`` () =
+    recWithFinally () |> equal "abcdeEDCBA"
+
+[<Fact>]
+let ``Recursive functions containing use work`` () =
+    recWithUse () |> equal "abcdeEDCBA"
+
+[<Fact>]
+let ``Function arguments can be optimized`` () =
+    // See #681
+    functionArguments [1;2;3] ((+) 2) |> equal 11
+
+[<Fact>]
+let ``Function arguments can be optimized II`` () =
+    // See #681
+    iterate ((*) 2) 5 10 |> equal 320
+
+    // See https://github.com/fable-compiler/Fable/issues/1368#issuecomment-434142713
+
+[<Fact>]
+let ``State of internally mutated tail called function parameters is preserved properly`` () =
+    let rec loop i lst =
+        if i <= 0
+        then lst
+        else loop (i - 1) ((fun () -> i) :: lst)
+    loop 3 [] |> List.map (fun f -> f()) |> equal [1;2;3]
+
+[<Fact>]
+let ``State of internally mutated tail called function parameters is preserved properly II`` () =
+    let rec loop lst i =
+        if i <= 0
+        then lst
+        else loop ((fun () -> i) :: lst) (i - 1)
+    loop [] 3 |> List.map (fun f -> f()) |> equal [1;2;3]
+
+// See https://github.com/fable-compiler/Fable/issues/1368#issuecomment-434142713
+
+[<Fact>]
+let ``Functions returning unit can be tail called`` () =
+  let cmpsts = Array.zeroCreate 16384
+  let rec loop x =
+    if x > 0 then
+      let rec loopi i =
+        if i <= 254 then
+          if cmpsts.[i >>> 3] &&& (1uy <<< (i &&& 7)) <> 0uy then loopi (i + 1) else
+          let p = i + i + 3
+          let s0 = 2 * i * (i + 3) + 3
+          let lmt = min 131072 <| s0 + (p <<< 3)
+          let rec loops s =
+            if s < lmt then
+              let msk = 1uy <<< (s &&& 7)
+              let rec loopj j =
+                let cmpsts = cmpsts
+                if j < 16384 then
+                  cmpsts.[j] <- cmpsts.[j] ||| msk
+                  loopj (j + p)
+              loopj (s >>> 3); loops (s + p)
+          loops s0; loopi (i + 1)
+      loopi 0; loop (x - 1)
+  loop 100
+  let oddprms = seq {
+    for i in 0 .. 131071 do
+      if cmpsts.[i >>> 3] &&& (1uy <<< (i &&& 7)) = 0uy
+      then yield i + i + 3 }
+  seq { yield 2; yield! oddprms }
+  |> Seq.length |> equal 23000
+
+[<Fact>]
+let ``Expressiones captured in a closure don_u27_t change after tail-call optimizations`` () =
+    // See #1859
+    Elmish.main Elmish.init Elmish.view Elmish.update
+    Elmish.getAccValue() |> equal 10
 
 let tests() =
-    testCase "Recursive functions can be tailcall optimized" <| fun () ->
-        factorial1 1 10 |> equal 3628800
-
-    testCase "Non-tailcall recursive functions work" <| fun () ->
-        factorial2 10 |> equal 3628800
-
-    testCase "Nested functions can be tailcall optimized" <| fun () ->
-        factorial3 10 |> equal 3628800
-
-    testCase "Arguments can be consumed after being \"passed\" in tailcall optimizations" <| fun () ->
-        sum 0L 100000L 0L
-        |> equal 4999950000L
-
-    testCase "Class methods can be tailcall optimized" <| fun () ->
-        let x = MyTailCall()
-        x.Sum(0L, 100000L, 0L)
-        |> equal 4999950000L
-
-    testCase "Mutually recursive functions can be partially optimized" <| fun () ->
-       let s = "a5b6c"
-       s.ToCharArray() |> Seq.toList |> parseTokens []
-       |> Seq.concat |> Seq.map string |> String.concat ""
-       |> equal "56"
-
-    testCase "IIFEs prevent tailcall optimization" <| fun () -> // See #674
-        iife [5; 4; 3] |> equal 24
-
-    testCase "Tailcall optimization doesn't cause endless loops" <| fun () -> // See #675
-        One("a", 42)
-        |> tryFind "a"
-        |> equal (Some 42)
-        Tree<string, int>.Empty
-        |> tryFind "a"
-        |> equal None
-
-    testCase "Recursive functions containing finally work" <| fun () ->
-        recWithFinally () |> equal "abcdeEDCBA"
-
-    testCase "Recursive functions containing use work" <| fun () ->
-        recWithUse () |> equal "abcdeEDCBA"
-
-    testCase "Function arguments can be optimized" <| fun () -> // See #681
-        functionArguments [1;2;3] ((+) 2) |> equal 11
-
-    testCase "Function arguments can be optimized II" <| fun () -> // See #681
-        iterate ((*) 2) 5 10 |> equal 320
-
-    // See https://github.com/fable-compiler/Fable/issues/1368#issuecomment-434142713
-    testCase "State of internally mutated tail called function parameters is preserved properly" <| fun () ->
-        let rec loop i lst =
-            if i <= 0
-            then lst
-            else loop (i - 1) ((fun () -> i) :: lst)
-        loop 3 [] |> List.map (fun f -> f()) |> equal [1;2;3]
-
-    testCase "State of internally mutated tail called function parameters is preserved properly II" <| fun () ->
-        let rec loop lst i =
-            if i <= 0
-            then lst
-            else loop ((fun () -> i) :: lst) (i - 1)
-        loop [] 3 |> List.map (fun f -> f()) |> equal [1;2;3]
-
-    // See https://github.com/fable-compiler/Fable/issues/1368#issuecomment-434142713
-    testCase "Functions returning unit can be tail called" <| fun () ->
-      let cmpsts = Array.zeroCreate 16384
-      let rec loop x =
-        if x > 0 then
-          let rec loopi i =
-            if i <= 254 then
-              if cmpsts.[i >>> 3] &&& (1uy <<< (i &&& 7)) <> 0uy then loopi (i + 1) else
-              let p = i + i + 3
-              let s0 = 2 * i * (i + 3) + 3
-              let lmt = min 131072 <| s0 + (p <<< 3)
-              let rec loops s =
-                if s < lmt then
-                  let msk = 1uy <<< (s &&& 7)
-                  let rec loopj j =
-                    let cmpsts = cmpsts
-                    if j < 16384 then
-                      cmpsts.[j] <- cmpsts.[j] ||| msk
-                      loopj (j + p)
-                  loopj (s >>> 3); loops (s + p)
-              loops s0; loopi (i + 1)
-          loopi 0; loop (x - 1)
-      loop 100
-      let oddprms = seq {
-        for i in 0 .. 131071 do
-          if cmpsts.[i >>> 3] &&& (1uy <<< (i &&& 7)) = 0uy
-          then yield i + i + 3 }
-      seq { yield 2; yield! oddprms }
-      |> Seq.length |> equal 23000
-
-    testCase "Expressiones captured in a closure don't change after tail-call optimizations" <| fun () -> // See #1859
-        Elmish.main Elmish.init Elmish.view Elmish.update
-        Elmish.getAccValue() |> equal 10
+    ``Recursive functions can be tailcall optimized`` ()
+    ``Non-tailcall recursive functions work`` ()
+    ``Nested functions can be tailcall optimized`` ()
+    ``Arguments can be consumed after being _u22_passed_u22_ in tailcall optimizations`` ()
+    ``Class methods can be tailcall optimized`` ()
+    ``Mutually recursive functions can be partially optimized`` ()
+    ``IIFEs prevent tailcall optimization`` ()
+    ``Tailcall optimization doesn_u27_t cause endless loops`` ()
+    ``Recursive functions containing finally work`` ()
+    ``Recursive functions containing use work`` ()
+    ``Function arguments can be optimized`` ()
+    ``Function arguments can be optimized II`` ()
+    ``State of internally mutated tail called function parameters is preserved properly`` ()
+    ``State of internally mutated tail called function parameters is preserved properly II`` ()
+    ``Functions returning unit can be tail called`` ()
+    ``Expressiones captured in a closure don_u27_t change after tail-call optimizations`` ()

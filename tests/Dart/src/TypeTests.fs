@@ -606,33 +606,36 @@ type IdHolder(id: Id) =
         member _.Id = id
         member _.GetId() = id
 
-let tests() =
+[<Fact>]
+let ``Unit arguments work`` () =
+    update () |> equal ((), ())
 
-    testCase "Unit arguments work" <| fun () ->
-        update () |> equal ((), ())
+[<Fact>]
+let ``Optional arguments work`` () =
+    let x = MyOptionalClass(?arg2 = Some "2")
+    (x.P1, x.P2, x.P3) |> equal (1.0, "2", 1)
+    let y = MyOptionalClass(2.0)
+    (y.P1, y.P2, y.P3) |> equal (2.0, "1", 1)
+    let z = MyOptionalClass(?arg3 = Some 2)
+    (z.P1, z.P2, z.P3) |> equal (1.0, "1", 2)
 
-    testCase "Optional arguments work" <| fun () ->
-        let x = MyOptionalClass(?arg2 = Some "2")
-        (x.P1, x.P2, x.P3) |> equal (1.0, "2", 1)
-        let y = MyOptionalClass(2.0)
-        (y.P1, y.P2, y.P3) |> equal (2.0, "1", 1)
-        let z = MyOptionalClass(?arg3 = Some 2)
-        (z.P1, z.P2, z.P3) |> equal (1.0, "1", 2)
+[<Fact>]
+let ``ArgumentException with message and inner exception works`` () =
+    let inner = exn "the inner cause"
+    let ex = System.ArgumentException("outer message", inner)
+    ex.Message |> equal "outer message"
+    ex.InnerException.Message |> equal "the inner cause"
 
-    testCase "ArgumentException with message and inner exception works" <| fun () ->
-        let inner = exn "the inner cause"
-        let ex = System.ArgumentException("outer message", inner)
-        ex.Message |> equal "outer message"
-        ex.InnerException.Message |> equal "the inner cause"
+[<Fact>]
+let ``Interface members can have the same name as their type`` () =
+    let holder = IdHolder(Id "foo") :> IHasId
+    match holder.Id with
+    | Id value -> value |> equal "foo"
+    match holder.GetId() with
+    | Id value -> value |> equal "foo"
 
-    testCase "Interface members can have the same name as their type" <| fun () ->
-        let holder = IdHolder(Id "foo") :> IHasId
-        match holder.Id with
-        | Id value -> value |> equal "foo"
-        match holder.GetId() with
-        | Id value -> value |> equal "foo"
-
-//     testCase "Can implement interface optional properties" <| fun () ->
+//     [<Fact>]
+//     let ``Can implement interface optional properties`` () =
 //         let veryOptionalValue = VeryOptionalClass() :> VeryOptionalInterface
 //         veryOptionalValue.Bar |> equal (Some 3)
 //         veryOptionalValue.Baz |> Option.isSome |> equal false
@@ -648,7 +651,8 @@ let tests() =
 //         let f2 = match fn with Some f -> f 1 8 | None -> -5
 //         f1 + f2 - fn2 9 3 |> equal -3
 
-//     testCase "Can implement interface optional properties with object expression" <| fun () ->
+//     [<Fact>]
+//     let ``Can implement interface optional properties with object expression`` () =
 //         let veryOptionalValue =
 //             let mutable foo = "ab"
 //             { new VeryOptionalInterface with
@@ -677,13 +681,15 @@ let tests() =
 //         let f2 = match fn with Some f -> f 1 8 | None -> -5
 //         f1 + f2 - fn2 9 3 |> equal -3
 
-//     testCase "Optional named params work" <| fun () ->
+//     [<Fact>]
+//     let ``Optional named params work`` () =
 //         StaticClass.NamedParams(foo="5", bar=4) |> equal 9
 //         StaticClass.NamedParams(foo="3", ?bar=Some 4) |> equal 7
 //         StaticClass.NamedParams(foo="14") |> equal 11
 //         StaticClass.NamedParams() |> equal "John is 30 years old"
 
-//     testCase "F# optional param works" <| fun () ->
+//     [<Fact>]
+//     let ``F# optional param works`` () =
 //         let mutable f1 = fun (v: bool) ->
 //             StaticClass.FSharpOptionalParam(value=v)
 //         let mutable f2 = fun (v: bool option) ->
@@ -700,7 +706,8 @@ let tests() =
 //         Some false |> f2 |> equal false
 //         Some true |> f2 |> equal true
 
-//     testCase "F# optional param works with no-wrappable options" <| fun () ->
+//     [<Fact>]
+//     let ``F# optional param works with no-wrappable options`` () =
 //         let mutable f1 = fun (v: unit) ->
 //             StaticClass.FSharpOptionalParam2(value=v)
 //         let mutable f2 = fun (v: unit option) ->
@@ -713,7 +720,8 @@ let tests() =
 //         None |> f2 |> equal false
 //         Some () |> f2 |> equal true
 
-//     testCase "DefaultParameterValue works" <| fun () ->
+//     [<Fact>]
+//     let ``DefaultParameterValue works`` () =
 //         StaticClass.DefaultParam() |> equal true
 //         StaticClass.DefaultParam(true) |> equal true
 //         StaticClass.DefaultParam(false) |> equal false
@@ -722,43 +730,51 @@ let tests() =
 //         StaticClass.DefaultParam2(Nullable()) |> equal 3
 //         StaticClass.DefaultParam2() |> equal 3
 
-//     testCase "DefaultParameterValue works with null" <| fun () -> // See #3326
+//     [<Fact>]
+//     let ``DefaultParameterValue works with null`` () = // See #3326
 //         StaticClass.DefaultNullParam() |> isNull |> equal true
 //         StaticClass.DefaultNullParam(5) |> isNull |> equal false
 
-//     testCase "Inlined methods can have optional arguments" <| fun () ->
+//     [<Fact>]
+//     let ``Inlined methods can have optional arguments`` () =
 //         StaticClass.InlineAdd(2, 3) |> equal 5
 //         StaticClass.InlineAdd(5) |> equal 7
 
 //     // TODO: This test produces different results in Fable and .NET
 //     // See Fable.Transforms.FSharp2Fable.TypeHelpers.makeTypeGenArgs
-//     // testCase "Reflection for types with measures work" <| fun () ->
+//     // [<Fact>]
+//     // let ``Reflection for types with measures work`` () =
 //     //     Reflection.FSharpType.GetRecordFields(typeof<MeasureTest1_>)
 //     //     |> Array.item 0
 //     //     |> fun fi -> fi.PropertyType.GetGenericArguments().Length
 //     //     |> equal 1
 
-//     testCase "Indexed properties work" <| fun () ->
+//     [<Fact>]
+//     let ``Indexed properties work`` () =
 //         let f = IndexedProps(5)
 //         f[4] |> equal 9
 //         f[3] <- "6"
 //         f[4] |> equal 13
 //         f[4.] |> equal 11
 
-//     testCase "Static interface members work" <| fun () ->
+//     [<Fact>]
+//     let ``Static interface members work`` () =
 //         let a = ITesting.Testing 5
 //         a |> equal 5
 
-//     testCase "Static interface calls work" <| fun () ->
+//     [<Fact>]
+//     let ``Static interface calls work`` () =
 //         getOne<I32>() |> equal 1
 //         getTwo<I32>() |> equal 2
 //         getSum<I32>() |> equal 3
 
-//     testCase "Types can instantiate their parent in the constructor" <| fun () ->
+//     [<Fact>]
+//     let ``Types can instantiate their parent in the constructor`` () =
 //         let t = TestType9()
 //         t.Greet("Maxime") |> equal "Hello Maxime"
 
-//     testCase "Type testing" <| fun () ->
+//     [<Fact>]
+//     let ``Type testing`` () =
 //         let x = TestType "test" :> obj
 //         let y = TestType2 "test" :> obj
 //         x :? TestType |> equal true
@@ -766,7 +782,8 @@ let tests() =
 //         y :? TestType |> equal false
 //         y :? TestType2 |> equal true
 
-//     testCase "Type testing in pattern matching" <| fun () ->
+//     [<Fact>]
+//     let ``Type testing in pattern matching`` () =
 //         let x = TestType "test" :> obj
 //         match x with
 //         | :? TestType as x -> x.Value
@@ -778,11 +795,13 @@ let tests() =
 //         |> equal "FAIL"
 
 //     // TODO: Should we make interface testing work in Fable 2?
-//     // testCase "Children inherits parent interfaces" <| fun () ->
+//     // [<Fact>]
+//     // let ``Children inherits parent interfaces`` () =
 //     //     let t4 = TestType4() |> box
 //     //     t4 :? ITest |> equal true
 
-//     // testCase "Interface testing" <| fun () ->
+//     // [<Fact>]
+//     // let ``Interface testing`` () =
 //     //     let x = Union1 "test" :> obj
 //     //     let y = Union2 "test" :> obj
 //     //     x :? ITest |> equal true
@@ -790,14 +809,16 @@ let tests() =
 //     //     y :? ITest |> equal true
 //     //     y :? ITest2 |> equal false
 
-//     // testCase "Interface testing in pattern matching" <| fun () ->
+//     // [<Fact>]
+//     // let ``Interface testing in pattern matching`` () =
 //     //     let x = Union2 "test" :> obj
 //     //     match x with | :? ITest -> true | _ -> false
 //     //     |> equal true
 //     //     match x with | :? ITest2 -> true | _ -> false
 //     //     |> equal false
 
-//     testCase "Type testing with JS primitive types works" <| fun () ->
+//     [<Fact>]
+//     let ``Type testing with JS primitive types works`` () =
 //         let test (o: obj) =
 //             match o with
 //             | :? string -> "string"
@@ -817,7 +838,8 @@ let tests() =
 //         [|"A"|] :> obj |> test |> equal "Array"
 //         [|1;2|] :> obj |> test |> equal "Array"
 
-//     testCase "Type test with Date" <| fun () ->
+//     [<Fact>]
+//     let ``Type test with Date`` () =
 //         let isDate (x: obj) =
 //             match x with
 //             | :? DateTime -> true
@@ -825,7 +847,8 @@ let tests() =
 //         DateTime.Now |> box |> isDate |> equal true
 //         box 5 |> isDate |> equal false
 
-//     testCase "Type test with Long" <| fun () ->
+//     [<Fact>]
+//     let ``Type test with Long`` () =
 //         let isLong (x: obj) =
 //             match x with
 //             | :? int64 -> true
@@ -833,7 +856,8 @@ let tests() =
 //         box 5L |> isLong |> equal true
 //         box 50 |> isLong |> equal false
 
-//     testCase "Type test with BigInt" <| fun () ->
+//     [<Fact>]
+//     let ``Type test with BigInt`` () =
 //         let isBigInt (x: obj) =
 //             match x with
 //             | :? bigint -> true
@@ -841,7 +865,8 @@ let tests() =
 //         box 5I |> isBigInt |> equal true
 //         box 50 |> isBigInt |> equal false
 
-//     testCase "Property names don't clash with built-in JS objects" <| fun () -> // See #168
+//     [<Fact>]
+//     let ``Property names don't clash with built-in JS objects`` () = // See #168
 //         let gameState = {
 //             Now = 1
 //             Map = "dungeon"
@@ -849,16 +874,19 @@ let tests() =
 //         }
 //         gameState.Players.ContainsKey(1) |> equal false
 
-//     testCase "Overloads work" <| fun () ->
+//     [<Fact>]
+//     let ``Overloads work`` () =
 //         let t = TestType5("")
 //         t.Overload(2) |> equal 4
 //         t.Overload(2, 3) |> equal 5
 
-//     testCase "Type abbreviation works" <| fun () ->
+//     [<Fact>]
+//     let ``Type abbreviation works`` () =
 //         let t = T4()
 //         t.Value2 |> equal "Bye"
 
-//     testCase "Getter and Setter work" <| fun () ->
+//     [<Fact>]
+//     let ``Getter and Setter work`` () =
 //         let t = TestType6(5)
 //         t.Value1 |> equal 5
 //         t.Value2 |> equal 10
@@ -872,7 +900,8 @@ let tests() =
 //         t.Value2 |> equal 20
 //         t.Value3 |> equal 100
 
-//     testCase "Getter and Setter with indexer work" <| fun () ->
+//     [<Fact>]
+//     let ``Getter and Setter with indexer work`` () =
 //         let t = TestType7(1, 2, 3)
 //         t.Value(1) |> equal 2
 //         t.Value(2) |> equal 3
@@ -880,7 +909,8 @@ let tests() =
 //         t.Value(1) |> equal 5
 //         t.Value(2) |> equal 3
 
-//     testCase "Attached Getters Setters and Indexers work" <| fun () ->
+//     [<Fact>]
+//     let ``Attached Getters Setters and Indexers work`` () =
 //         let t = TestTypeAttached(1, 2, 3)
 //         t.Value1 |> equal 2
 //         t.Value1 <- 22
@@ -892,7 +922,8 @@ let tests() =
 //         t[2] <- 33
 //         t[2] |> equal 33
 
-//     testCase "Interface Getters Setters and Indexers work" <| fun () ->
+//     [<Fact>]
+//     let ``Interface Getters Setters and Indexers work`` () =
 //         let t = TestProps([| 1; 2; 3 |]) :> ITestProps
 //         t.Value1 |> equal 2
 //         t.Value1 <- 22
@@ -904,19 +935,22 @@ let tests() =
 //         t[2] <- 33
 //         t[2] |> equal 33
 
-//     testCase "Statically resolved instance calls work" <| fun () ->
+//     [<Fact>]
+//     let ``Statically resolved instance calls work`` () =
 //         let a = { thing = 5 }
 //         let b = { label = "five" }
 //         show a |> equal "5"
 //         show b |> equal "five"
 
-//     testCase "Statically resolved static calls work" <| fun () ->
+//     [<Fact>]
+//     let ``Statically resolved static calls work`` () =
 //         let a = { thing = 5 }
 //         let b = { label = "five" }
 //         showStatic a |> equal "Static: 5"
 //         showStatic b |> equal "Static: five"
 
-//     testCase "Guid.NewGuid works" <| fun () ->
+//     [<Fact>]
+//     let ``Guid.NewGuid works`` () =
 //         let g1 = Guid.NewGuid()
 //         let g2 = Guid.NewGuid()
 //         g1 = g2 |> equal false
@@ -928,15 +962,18 @@ let tests() =
 //         let g3 = Guid.Parse s1
 //         g1 = g3 |> equal true
 
-//     testCase "Guid.Empty works" <| fun () ->
+//     [<Fact>]
+//     let ``Guid.Empty works`` () =
 //         let g1 = Guid.Empty
 //         string g1 |> equal "00000000-0000-0000-0000-000000000000"
 
-//     testCase "Guid.ToString works" <| fun () ->
+//     [<Fact>]
+//     let ``Guid.ToString works`` () =
 //         let g1 = Guid.Parse "dec42487-c02b-42a6-9a10-0263a5a7fdf1"
 //         string g1 |> equal "dec42487-c02b-42a6-9a10-0263a5a7fdf1"
 
-//     testCase "lazy works" <| fun () ->
+//     [<Fact>]
+//     let ``lazy works`` () =
 //         let mutable snitch = 0
 //         let lazyVal =
 //             lazy
@@ -948,7 +985,8 @@ let tests() =
 //         lazyVal.Force() |> equal 5
 //         equal 1 snitch
 
-//     testCase "Lazy.CreateFromValue works" <| fun () ->
+//     [<Fact>]
+//     let ``Lazy.CreateFromValue works`` () =
 //         let mutable snitch = 0
 //         let lazyVal =
 //             Lazy<_>.CreateFromValue(
@@ -958,7 +996,8 @@ let tests() =
 //         equal 5 lazyVal.Value
 //         equal 1 snitch
 
-//     testCase "lazy.IsValueCreated works" <| fun () ->
+//     [<Fact>]
+//     let ``lazy.IsValueCreated works`` () =
 //         let mutable snitch = 0
 //         let lazyVal =
 //             Lazy<_>.Create(fun () ->
@@ -971,23 +1010,27 @@ let tests() =
 //         lazyVal.Force() |> equal 5
 //         equal true lazyVal.IsValueCreated
 
-//     testCase "Lazy constructor works" <| fun () ->
+//     [<Fact>]
+//     let ``Lazy constructor works`` () =
 //         let items = Lazy<string list>(fun () -> ["a";"b";"c"])
 //         let search e = items.Value |> List.tryFind (fun m -> m = e)
 //         search "b" |> equal (Some "b")
 //         search "d" |> equal None
 
-//     testCase "Secondary constructors work" <| fun () ->
+//     [<Fact>]
+//     let ``Secondary constructors work`` () =
 //         let s1 = SecondaryCons(3)
 //         let s2 = SecondaryCons()
 //         equal 3 s1.Value
 //         equal 5 s2.Value
 
-//     // testCase "Inheriting from secondary constructors works" <| fun () ->
+//     // [<Fact>]
+//     // let ``Inheriting from secondary constructors works`` () =
 //     //     let s = SecondaryConsChild()
 //     //     equal 5 s.Value
 
-//     testCase "Multiple constructors work" <| fun () ->
+//     [<Fact>]
+//     let ``Multiple constructors work`` () =
 //         let m1 = MultipleCons()
 //         let m2 = MultipleCons(5)
 //         let m3 = MultipleCons(7,7)
@@ -995,7 +1038,8 @@ let tests() =
 //         equal 9 m2.Value
 //         equal 14 m3.Value
 
-//     testCase "Abstract methods with default work" <| fun () -> // See #505
+//     [<Fact>]
+//     let ``Abstract methods with default work`` () = // See #505
 //         let x = ConcreteClass()
 //         x.MethodWithDefault() |> equal "Hello "
 //         x.MustImplement() |> equal "World!!"
@@ -1003,35 +1047,41 @@ let tests() =
 //         let x = ConcreteClass2()
 //         x.CallMethodWithDefault() |> equal "Hi World!!"
 
-//     testCase "Abstract properties with getters and setters work" <| fun () ->
+//     [<Fact>]
+//     let ``Abstract properties with getters and setters work`` () =
 //         let x = ConcreteClass3() :> AbstractClass3
 //         x.MyProp <- 2
 //         equal 7 x.MyProp
 
-//     testCase "Interface setters don't conflict" <| fun () -> // See #505
+//     [<Fact>]
+//     let ``Interface setters don't conflict`` () = // See #505
 //         let x = XISomeInterface () :> ISomeInterface
 //         x.Sender |> equal 0
 //         x.Sender <- 5
 //         x.Sender |> equal 5
 
-//     testCase "A type can overload an interface method" <| fun () ->
+//     [<Fact>]
+//     let ``A type can overload an interface method`` () =
 //         let foo = FooImplementor()
 //         foo.Foo() |> equal "foo"
 //         (foo :> IFoo).Foo() |> equal "foobar"
 //         mangleFoo foo |> equal "foobar"
 
-//     testCase "A child can be casted to parent's interface" <| fun () ->
+//     [<Fact>]
+//     let ``A child can be casted to parent's interface`` () =
 //         let foo = FooImplementorChild()
 //         foo.Foo() |> equal "foofoofoo"
 //         (foo :> IFoo).Foo() |> equal "foofoofoobar"
 //         mangleFoo foo |> equal "foofoofoobar"
 
-//     testCase "A type can overload an interface getter" <| fun () ->
+//     [<Fact>]
+//     let ``A type can overload an interface getter`` () =
 //         let foo = FooImplementor()
 //         foo.Bar |> equal "he"
 //         (foo :> IFoo).Bar |> equal "heho"
 
-//     testCase "A type can overload an interface setter" <| fun () ->
+//     [<Fact>]
+//     let ``A type can overload an interface setter`` () =
 //         let foo = FooImplementor()
 //         foo.MySetter <- 7
 //         foo.MySetter |> equal 9
@@ -1039,13 +1089,15 @@ let tests() =
 //         (foo :> IFoo).MySetter |> equal 19
 
 //     // TODO: Interface and abstract methods with same name clash
-//     testCase "A type overloading an interface method can be inherited" <| fun () ->
+//     [<Fact>]
+//     let ``A type overloading an interface method can be inherited`` () =
 //         let foo = ChildFoo() :> AbstractFoo
 //         foo.Foo2() |> equal "BAR"
 //         (foo :> IFoo).Foo() |> equal "BARFOO"
 //         mangleFoo foo |> equal "BARFOO"
 
-//     testCase "Interface casting round-trip" <| fun () -> // See #1452
+//     [<Fact>]
+//     let ``Interface casting round-trip`` () = // See #1452
 //         let d = new DowncastTest(3) :> System.IDisposable
 //         let t = d :?> DowncastTest
 //         t.Value |> equal 3
@@ -1054,56 +1106,66 @@ let tests() =
 //             | :? DowncastTest as t2 -> t2.Value
 //             | _ -> 5
 
-//     testCase "Calling default implementation of base members don't cause infinite recursion" <| fun () -> // See #701
+//     [<Fact>]
+//     let ``Calling default implementation of base members don't cause infinite recursion`` () = // See #701
 //         let x = ExtendedClass()
 //         x.Init() |> equal 7
 //         (x :> BaseClass).Init() |> equal 7
 
-//     testCase "Calling default implementation of base properties don't cause infinite recursion" <| fun () -> // See #701
+//     [<Fact>]
+//     let ``Calling default implementation of base properties don't cause infinite recursion`` () = // See #701
 //         let x = ExtendedClass()
 //         x.Prop |> equal "base-extension"
 //         (x :> BaseClass).Prop |> equal "base-extension"
 
-//     testCase "Calling base members works" <| fun () -> // See #1464
+//     [<Fact>]
+//     let ``Calling base members works`` () = // See #1464
 //         let bar = ExtendedClass2()
 //         bar.B() |> equal 1
 
-//     testCase "Circular dependencies work" <| fun () -> // See #569
+//     [<Fact>]
+//     let ``Circular dependencies work`` () = // See #569
 //         let location = { name="NY"; employees=[] }
 //         let alice = { name="Alice"; age=20.0; location=location  }
 //         location.name |> equal "NY"
 //         alice.age |> equal 20.
 
-//     testCase "Value Type records work" <| fun () -> // See #568
+//     [<Fact>]
+//     let ``Value Type records work`` () = // See #568
 //         let foo1 = ValueType<_>("foo")
 //         let foo2 = ValueType<_>("foo")
 //         foo1.Value |> equal "foo"
 //         foo1.value |> equal "foo"
 //         foo1 = foo2 |> equal true
 
-//     testCase "Value Type unions work" <| fun () ->
+//     [<Fact>]
+//     let ``Value Type unions work`` () =
 //         let du1 = StructUnion.Value "du"
 //         let du2 = StructUnion.Value "du"
 //         du1 = du2 |> equal true
 
-//     testCase "Value Type tuples work" <| fun () ->
+//     [<Fact>]
+//     let ``Value Type tuples work`` () =
 //         let tu1 = struct ("a","b")
 //         let tu2 = struct ("a","b")
 //         tu1 = tu2 |> equal true
 
-//     testCase "Value Types work" <| fun () ->
+//     [<Fact>]
+//     let ``Value Types work`` () =
 //         let bar1 = ValueType1("bar")
 //         let bar2 = ValueType1("bar")
 //         bar1.Value |> equal "bar"
 //         bar1 = bar2 |> equal true
 
-//     testCase "Other Value Types work" <| fun () ->
+//     [<Fact>]
+//     let ``Other Value Types work`` () =
 //         let test2 = ValueType2(3, 4)
 //         test2.Value |> equal 7
 //         let p = Point2D(2.)
 //         p.Y |> equal 2.
 
-//     testCase "struct without explicit ctor works" <| fun () ->
+//     [<Fact>]
+//     let ``struct without explicit ctor works`` () =
 //         let t1 = ValueType3(X=10)
 //         t1.X |> equal 10
 //         let mutable t2 = ValueType3()
@@ -1114,12 +1176,14 @@ let tests() =
 //         t1 |> equal t2
 //         (compare t1 t2) |> equal 0
 
-//     testCase "Struct with mutable fields works" <| fun () ->
+//     [<Fact>]
+//     let ``Struct with mutable fields works`` () =
 //         let x = ValueTypeR(-10.0)
 //         x.X |> equal -10.0
 //         x.IsEmpty() |> equal true
 
-//     testCase "copying struct records works" <| fun () -> // See #3371
+//     [<Fact>]
+//     let ``copying struct records works`` () = // See #3371
 //         let simple : SimpleRecord = { A = ""; B = "B" }
 //         let simpleRecord = { simple with A = "A" }
 //         simpleRecord.A |> equal "A"
@@ -1127,7 +1191,8 @@ let tests() =
 //         simple.A |> equal ""
 //         simple.B |> equal "B"
 
-//     testCase "Custom F# exceptions work" <| fun () ->
+//     [<Fact>]
+//     let ``Custom F# exceptions work`` () =
 //         try
 //             MyEx(4,"ERROR") |> raise
 //         with
@@ -1136,7 +1201,8 @@ let tests() =
 //         | ex -> (false, "unknown")
 //         |> equal (true, "ERROR!!")
 
-//     testCase "Custom exceptions work" <| fun () ->
+//     [<Fact>]
+//     let ``Custom exceptions work`` () =
 //         try
 //             MyEx2(5.5) |> raise
 //         with
@@ -1144,7 +1210,8 @@ let tests() =
 //         | ex -> (false, "unknown", 0.)
 //         |> equal (true, "Code: 5", 5.5)
 
-//     testCase "reraise works" <| fun () ->
+//     [<Fact>]
+//     let ``reraise works`` () =
 //         try
 //             try
 //                 Exception("Will I be reraised?") |> raise
@@ -1156,10 +1223,12 @@ let tests() =
 //         with ex -> ex.Message
 //         |> equal "Will I be reraised?"
 
-//     testCase "This context is not lost in closures within implicit constructor" <| fun () -> // See #1444
+//     [<Fact>]
+//     let ``This context is not lost in closures within implicit constructor`` () = // See #1444
 //         ThisContextInConstructor(7).Value() |> equal 7
 
-//     testCase "Type can be casted to an interface implemented by parent" <| fun () ->
+//     [<Fact>]
+//     let ``Type can be casted to an interface implemented by parent`` () =
 //         let c = TestType10Child()
 //         let f1 = c :> ITest4
 //         let f2 = c :> ITest3
@@ -1167,16 +1236,19 @@ let tests() =
 //         f1.Add2(4, 5) |> equal -1
 //         f2.Add2(4, 5) |> equal -1
 
-//     testCase "ClassAttribute works" <| fun () -> // See #573
+//     [<Fact>]
+//     let ``ClassAttribute works`` () = // See #573
 //         let t1 = TypeWithClassAttribute(8)
 //         t1.Pos |> equal 8
 
-//     testCase "Issue #1975: Compile type with parameterized units of measure as generic" <| fun () ->
+//     [<Fact>]
+//     let ``Issue #1975: Compile type with parameterized units of measure as generic`` () =
 //         let a = makeTestTypeWithParameterizedUnitMeasureType 2.
 //         equal 2. a.Value
 
 //     // Test ported from https://github.com/fable-compiler/Fable/pull/1336/files
-// //    testCase "default value attributes works" <| fun _ ->
+// //    [<Fact>]
+// //    let ``default value attributes works`` () =
 // //        let withDefaultValue = TestTypeWithDefaultValue()
 // //
 // //        withDefaultValue.IntValue |> equal Unchecked.defaultof<int>
@@ -1188,14 +1260,16 @@ let tests() =
 // //        withDefaultValue.ObjValue |> equal Unchecked.defaultof<System.Collections.Generic.Dictionary<string, string>>
 // //        withDefaultValue.ObjValue |> equal null
 
-//     testCase "Private fields don't conflict with parent classes" <| fun _ -> // See #2070
+//     [<Fact>]
+//     let ``Private fields don't conflict with parent classes`` () = // See #2070
 //         let a1 = InfoBClass({ InfoA = { Foo = "foo" }; Bar = "bar" }) :> InfoAClass
 //         let a2 = a1.WithFoo("foo2")
 //         a1.Foo |> equal "foo"
 //         a2.Foo |> equal "foo2"
 
 //     // See #2084
-//     testCase "Non-mangled interfaces work with object expressions" <| fun _ ->
+//     [<Fact>]
+//     let ``Non-mangled interfaces work with object expressions`` () =
 //         let mutable foo = "Foo"
 //         let foo = { new FooInterface with
 //                         member _.Foo with get() = foo and set x = foo <- x
@@ -1213,7 +1287,8 @@ let tests() =
 //         foo.Foo |> equal "FoW19.20Wabcd"
 
 //     // See #2084
-//     testCase "Mangled interfaces work with object expressions" <| fun _ ->
+//     [<Fact>]
+//     let ``Mangled interfaces work with object expressions`` () =
 //         let mutable bar = "Bar"
 //         let bar = { new BarInterface with
 //                         member _.Bar with get() = bar and set x = bar <- x
@@ -1232,7 +1307,8 @@ let tests() =
 //         bar.Bar |> equal "Zar77.40rfalsefalsedbca"
 
 //     // See #2084
-//     testCase "Non-mangled interfaces work with classes" <| fun _ ->
+//     [<Fact>]
+//     let ``Non-mangled interfaces work with classes`` () =
 //         let addPlus2 x y = x + y + 2.
 //         let multiplyTwice x y = x * y * y
 //         let foo2 = FooClass("Foo") :> FooInterface
@@ -1242,7 +1318,8 @@ let tests() =
 //         foo2.Foo |> equal "Woo1020.00oabcabcdabcabcd"
 
 //     // See #2084
-//     testCase "Mangled interfaces work with classes" <| fun _ ->
+//     [<Fact>]
+//     let ``Mangled interfaces work with classes`` () =
 //         let addPlus2 x y = x + y + 2.
 //         let multiplyTwice x y = x * y * y
 //         let bar2 = BarClass("Bar") :> BarInterface
@@ -1251,28 +1328,34 @@ let tests() =
 //         bar2.Bar <- bar2.Bar + bar2.Sum("a", "bc", "d")
 //         bar2.Bar |> equal "BZr9536.74rtruefalseaabcbcaabcbcdd"
 
-//     testCase "Multiple `this` references work in nested attached members" <| fun _ ->
+//     [<Fact>]
+//     let ``Multiple `this` references work in nested attached members`` () =
 //         (MixedThese(2) :> Interface1).Create(3).Add() |> equal 5
 
-//     testCase "Two unions of different type with same shape are not equal" <| fun () ->
+//     [<Fact>]
+//     let ``Two unions of different type with same shape are not equal`` () =
 //         areEqual (MyUnion1.Foo(1,2)) (MyUnion2.Foo(1,2)) |> equal false
 //         areEqual (MyUnion1.Foo(1,2)) (MyUnion1.Foo(1,2)) |> equal true
 
-//     testCase "Two records of different type with same shape are not equal" <| fun () ->
+//     [<Fact>]
+//     let ``Two records of different type with same shape are not equal`` () =
 //         areEqual { MyRecord1.Foo = 2; Bar = "oh" } { MyRecord2.Foo = 2; Bar = "oh" } |> equal false
 //         areEqual { MyRecord1.Foo = 2; Bar = "oh" } { MyRecord1.Foo = 2; Bar = "oh" } |> equal true
 
-//     testCase "IsSubclassOf checks whole hierarchy" <| fun () ->
+//     [<Fact>]
+//     let ``IsSubclassOf checks whole hierarchy`` () =
 //         typeof<SubclassTest2>.IsSubclassOf(typeof<SubclassTest1>) |> equal true
 //         typeof<SubclassTest3>.IsSubclassOf(typeof<SubclassTest1>) |> equal true
 
-//     testCase "IsSubclassOf returns true for System.Object" <| fun () ->
+//     [<Fact>]
+//     let ``IsSubclassOf returns true for System.Object`` () =
 //         typeof<SubclassTest2>.IsSubclassOf(typeof<obj>) |> equal true
 //         typeof<string>.IsSubclassOf(typeof<obj>) |> equal true
 //         typeof<int>.IsSubclassOf(typeof<obj>) |> equal true
 //         typeof<unit -> unit>.IsSubclassOf(typeof<obj>) |> equal true
 
-//     testCase "IsInstanceOfType works with class types" <| fun () ->
+//     [<Fact>]
+//     let ``IsInstanceOfType works with class types`` () =
 //         let s1, s2 = SubclassTest1(), SubclassTest2()
 //         typeof<obj>.IsInstanceOfType(s1) |> equal true
 //         typeof<SubclassTest1>.IsInstanceOfType(s1) |> equal true
@@ -1282,24 +1365,28 @@ let tests() =
 //         typeof<SubclassTest2>.IsInstanceOfType(s2) |> equal true
 //         typeof<SubclassTest3>.IsInstanceOfType(s2) |> equal false
 
-//     testCase "IsInstanceOfType works with nominal records" <| fun () ->
+//     [<Fact>]
+//     let ``IsInstanceOfType works with nominal records`` () =
 //         typeof<MyRecord1>.IsInstanceOfType({ MyRecord1.Foo = 2; Bar = "oh" }) |> equal true
 //         typeof<obj>.IsInstanceOfType({ MyRecord1.Foo = 2; Bar = "oh" }) |> equal true
 //         typeof<MyRecord2>.IsInstanceOfType({ MyRecord1.Foo = 2; Bar = "oh" }) |> equal false
 
-//     testCase "IsInstanceOfType works with nominal unions" <| fun () ->
+//     [<Fact>]
+//     let ``IsInstanceOfType works with nominal unions`` () =
 //         typeof<MyUnion1>.IsInstanceOfType(MyUnion1.Foo(1,2)) |> equal true
 //         typeof<obj>.IsInstanceOfType(MyUnion1.Foo(1,2)) |> equal true
 //         typeof<MyUnion2>.IsInstanceOfType(MyUnion1.Foo(1,2)) |> equal false
 
 //     // Expected to always return true for any numeric type, just like :? operator
-//     testCase "IsInstanceOfType works with enums" <| fun () ->
+//     [<Fact>]
+//     let ``IsInstanceOfType works with enums`` () =
 //         typeof<EnumFoo>.IsInstanceOfType(EnumFoo.Foo) |> equal true
 //         typeof<EnumFoo>.IsInstanceOfType(EnumFoo.Bar) |> equal true
 //         typeof<obj>.IsInstanceOfType(EnumFoo.Bar) |> equal true
 
 //     // Expected to always return true for any function and function type, just like :? operator
-//     testCase "IsInstanceOfType works with functions" <| fun () ->
+//     [<Fact>]
+//     let ``IsInstanceOfType works with functions`` () =
 //         typeof<unit -> unit>.IsInstanceOfType(fun () -> ()) |> equal true
 //         typeof<obj>.IsInstanceOfType(fun () -> ()) |> equal true
 //         //typeof<unit -> int>.IsInstanceOfType(fun () -> ()) |> equal false
@@ -1307,7 +1394,8 @@ let tests() =
 //         typeof<obj>.IsInstanceOfType(String.length) |> equal true
 //         //typeof<int -> int>.IsInstanceOfType(String.length) |> equal false
 
-//     testCase "IsInstanceOfType works with primitives" <| fun () ->
+//     [<Fact>]
+//     let ``IsInstanceOfType works with primitives`` () =
 //         typeof<string>.IsInstanceOfType("hello") |> equal true
 //         typeof<obj>.IsInstanceOfType("hello") |> equal true
 //         typeof<string>.IsInstanceOfType(5) |> equal false
@@ -1316,35 +1404,48 @@ let tests() =
 //         typeof<int>.IsInstanceOfType("hello") |> equal false
 
 // #if FABLE_COMPILER
-//     testCase "Choice with arity 3+ is represented correctly" <| fun () -> // See #2485
+//     [<Fact>]
+//     let ``Choice with arity 3+ is represented correctly`` () = // See #2485
 //         Choice2Of3 55 |> Fable.Core.Reflection.getCaseName |> equal "Choice2Of3"
 //         Choice3Of3 55 |> Fable.Core.Reflection.getCaseName |> equal "Choice3Of3"
 // #endif
 
-//     testCase "Can call the base version of a mangled abstract method that was declared above in the hierarchy" <| fun () ->
+//     [<Fact>]
+//     let ``Can call the base version of a mangled abstract method that was declared above in the hierarchy`` () =
 //         let c = ConcreteClass1()
 //         c.MyMethod(4) |> equal 58
 
 //     // See #3328
-//     testCase "SRTP works with byref" <| fun () ->
+//     [<Fact>]
+//     let ``SRTP works with byref`` () =
 //       let result = doubleIntByRef (TypeWithByRefMember()) 7
 //       result |> equal 14
 
 //     // See #3328
-//     testCase "inline byref works" <| fun () ->
+//     [<Fact>]
+//     let ``inline byref works`` () =
 //         let mutable an_int = 22
 //         callWithByrefCreatedFromByrefInlined &an_int
 //         an_int |> equal 44
 
 //     // See #3328
-//     testCase "inline byref works (with separate binding for reference)" <| fun () ->
+//     [<Fact>]
+//     let ``inline byref works (with separate binding for reference)`` () =
 //         let mutable an_int = 33
 //         let intRef = &an_int
 //         ignore intRef
 //         callWithByrefCreatedFromByrefInlined &intRef
 //         an_int |> equal 66
 
-//     testCase "inline with generic byref works" <| fun () ->
+//     [<Fact>]
+//     let ``inline with generic byref works`` () =
 //         let mutable arr = [| 1; 2; 3 |]
 //         let result = genericByrefFunc &arr
 //         result |> equal 3
+
+let tests() =
+
+    ``Unit arguments work`` ()
+    ``Optional arguments work`` ()
+    ``ArgumentException with message and inner exception works`` ()
+    ``Interface members can have the same name as their type`` ()

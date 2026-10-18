@@ -23,132 +23,169 @@ and red () = seq {
     yield "red"
     yield! green() }
 
-let tests() =
-    testCase "empty seq expressions work" <| fun () ->
-        seq { do () }
-        |> Seq.length |> float |> equal 0.
+[<Fact>]
+let ``empty seq expressions work`` () =
+    seq { do () }
+    |> Seq.length |> float |> equal 0.
 
-    testCase "yield in seq expressions works" <| fun () ->
-        seq { yield 1 }
-        |> Seq.length |> equal 1
+[<Fact>]
+let ``yield in seq expressions works`` () =
+    seq { yield 1 }
+    |> Seq.length |> equal 1
 
-    testCase "yield from in seq expressions works" <| fun () ->
-        let ys = seq { yield 1 }
-        seq { yield! ys }
-        |> Seq.length |> equal 1
+[<Fact>]
+let ``yield from in seq expressions works`` () =
+    let ys = seq { yield 1 }
+    seq { yield! ys }
+    |> Seq.length |> equal 1
 
-    testCase "infinite seq expressions work" <| fun () ->
-        green() |> Seq.item 12 |> equal "green"
+[<Fact>]
+let ``infinite seq expressions work`` () =
+    green() |> Seq.item 12 |> equal "green"
 
-    testCase "combine in seq expressions works" <| fun () ->
-        seq { yield 1; yield 2 }
-        |> Seq.length |> equal 2
+[<Fact>]
+let ``combine in seq expressions works`` () =
+    seq { yield 1; yield 2 }
+    |> Seq.length |> equal 2
 
-    testCase "multiple yields in seq expressions work" <| fun () ->
-        let upTo n = seq {
-            for i = 1 to n do yield n
-        }
-        let numbers () = seq {
-            yield 8
-            yield! upTo 5
-            yield 4
-            yield! upTo 3
-            yield 2
-        }
-        numbers() |> Seq.sum |> equal 48
+[<Fact>]
+let ``multiple yields in seq expressions work`` () =
+    let upTo n = seq {
+        for i = 1 to n do yield n
+    }
+    let numbers () = seq {
+        yield 8
+        yield! upTo 5
+        yield 4
+        yield! upTo 3
+        yield 2
+    }
+    numbers() |> Seq.sum |> equal 48
 
-    testCase "for in seq expressions works" <| fun () ->
-        seq { for x in 1 .. 10 do yield x }
-        |> Seq.length |> equal 10
+[<Fact>]
+let ``for in seq expressions works`` () =
+    seq { for x in 1 .. 10 do yield x }
+    |> Seq.length |> equal 10
 
-    testCase "while in seq expressions works" <| fun () ->
-        let mutable n = 0
-        seq {
-            while n < 10 do
-                n <- n + 1
-                yield n
-        } |> Seq.sum |> equal 55
+[<Fact>]
+let ``while in seq expressions works`` () =
+    let mutable n = 0
+    seq {
+        while n < 10 do
+            n <- n + 1
+            yield n
+    } |> Seq.sum |> equal 55
 
-    testCase "recursive seq expressions work" <| fun () ->
-        let rec traverse t = seq {
-            match t with
-            | Leaf -> ()
-            | Node(xs, y, zs) ->
-                yield y
-                yield! traverse xs
-                yield! traverse zs |> Seq.map (fun x -> 2 * x)
-        }
-        let t = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))
-        traverse t |> Seq.sum |> equal 9
+[<Fact>]
+let ``recursive seq expressions work`` () =
+    let rec traverse t = seq {
+        match t with
+        | Leaf -> ()
+        | Node(xs, y, zs) ->
+            yield y
+            yield! traverse xs
+            yield! traverse zs |> Seq.map (fun x -> 2 * x)
+    }
+    let t = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Leaf))
+    traverse t |> Seq.sum |> equal 9
 
-    testCase "try...finally in seq expressions works" <| fun () ->
-        let mutable n = 0
-        try seq {
-            try
-                raise (exn "My message")
-            finally
-                n <- n + 1
-            } |> Seq.iter ignore
-        with _ -> ()
-        equal 1 n
-
-    testCase "try...with in list expressions works" <| fun () ->
-        [ try 1 with _ -> 0 ]
-        |> equal [1]
-
-    testCase "try...with in list expressions catches exceptions" <| fun () ->
-        [ try raise (exn "boom") with _ -> 42 ]
-        |> equal [42]
-
-    testCase "try...with in array expressions works" <| fun () ->
-        [| try raise (exn "boom") with _ -> 7 |]
-        |> equal [| 7 |]
-
-    testCase "try...with in seq expressions preserves yielded elements before the exception" <| fun () ->
-        let mutable caught = false
-        let xs =
-            seq {
-                try
-                    yield 1
-                    raise (exn "boom")
-                    yield 2
-                with _ ->
-                    caught <- true
-                    yield 3
-            } |> Seq.toList
-        equal [1; 3] xs
-        equal true caught
-
-    testCase "try...with in seq expressions rethrows unmatched exceptions" <| fun () ->
-        let mutable propagated = false
+[<Fact>]
+let ``try...finally in seq expressions works`` () =
+    let mutable n = 0
+    try seq {
         try
-            seq {
-                try
-                    yield 1
-                    raise (System.InvalidOperationException "boom")
-                    yield 2
-                with :? System.ArgumentException ->
-                    yield 0
-            }
-            |> Seq.toList
-            |> ignore
-        with :? System.InvalidOperationException ->
-            propagated <- true
-        equal true propagated
-
-    testCase "use in seq expressions works" <| fun () ->
-        let mutable n = 0
-        seq {
-            use x = new DisposableAction(fun () ->
-                n <- n + 1)
-            ignore x
+            raise (exn "My message")
+        finally
+            n <- n + 1
         } |> Seq.iter ignore
-        equal 1 n
+    with _ -> ()
+    equal 1 n
 
-    testCase "array expressions work" <| fun () ->
-        [| for x in 1 .. 10 do yield x |]
-        |> Array.length |> equal 10
+[<Fact>]
+let ``try...with in list expressions works`` () =
+    [ try 1 with _ -> 0 ]
+    |> equal [1]
 
-    testCase "list expressions work" <| fun () ->
-        [ for x in 1 .. 10 do yield x ]
-        |> List.length |> equal 10
+[<Fact>]
+let ``try...with in list expressions catches exceptions`` () =
+    [ try raise (exn "boom") with _ -> 42 ]
+    |> equal [42]
+
+[<Fact>]
+let ``try...with in array expressions works`` () =
+    [| try raise (exn "boom") with _ -> 7 |]
+    |> equal [| 7 |]
+
+[<Fact>]
+let ``try...with in seq expressions preserves yielded elements before the exception`` () =
+    let mutable caught = false
+    let xs =
+        seq {
+            try
+                yield 1
+                raise (exn "boom")
+                yield 2
+            with _ ->
+                caught <- true
+                yield 3
+        } |> Seq.toList
+    equal [1; 3] xs
+    equal true caught
+
+[<Fact>]
+let ``try...with in seq expressions rethrows unmatched exceptions`` () =
+    let mutable propagated = false
+    try
+        seq {
+            try
+                yield 1
+                raise (System.InvalidOperationException "boom")
+                yield 2
+            with :? System.ArgumentException ->
+                yield 0
+        }
+        |> Seq.toList
+        |> ignore
+    with :? System.InvalidOperationException ->
+        propagated <- true
+    equal true propagated
+
+[<Fact>]
+let ``use in seq expressions works`` () =
+    let mutable n = 0
+    seq {
+        use x = new DisposableAction(fun () ->
+            n <- n + 1)
+        ignore x
+    } |> Seq.iter ignore
+    equal 1 n
+
+[<Fact>]
+let ``array expressions work`` () =
+    [| for x in 1 .. 10 do yield x |]
+    |> Array.length |> equal 10
+
+[<Fact>]
+let ``list expressions work`` () =
+    [ for x in 1 .. 10 do yield x ]
+    |> List.length |> equal 10
+
+let tests() =
+    ``empty seq expressions work`` ()
+    ``yield in seq expressions works`` ()
+    ``yield from in seq expressions works`` ()
+    ``infinite seq expressions work`` ()
+    ``combine in seq expressions works`` ()
+    ``multiple yields in seq expressions work`` ()
+    ``for in seq expressions works`` ()
+    ``while in seq expressions works`` ()
+    ``recursive seq expressions work`` ()
+    ``try...finally in seq expressions works`` ()
+    ``try...with in list expressions works`` ()
+    ``try...with in list expressions catches exceptions`` ()
+    ``try...with in array expressions works`` ()
+    ``try...with in seq expressions preserves yielded elements before the exception`` ()
+    ``try...with in seq expressions rethrows unmatched exceptions`` ()
+    ``use in seq expressions works`` ()
+    ``array expressions work`` ()
+    ``list expressions work`` ()

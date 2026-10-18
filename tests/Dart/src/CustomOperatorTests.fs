@@ -21,30 +21,45 @@ type CustomPow =
     { Ok: bool }
     static member Pow(x: CustomPow, n: int) = { Ok = true }
 
-let typeOperators() =
-    testCase "Custom operators with types work" <| fun () ->
-        let p1 = { x=5.; y=10. }
-        let p2 = { x=2.; y=1. }
-        equal 7. (p1 + p2).x
-        equal 9. (p1 - p2).y
+[<Fact>]
+let ``Custom operators with types work`` () =
+    let p1 = { x=5.; y=10. }
+    let p2 = { x=2.; y=1. }
+    equal 7. (p1 + p2).x
+    equal 9. (p1 - p2).y
 
-    testCase "Inline custom operators with types work" <| fun () -> // See #230
-        let p1 = { x=5.; y=10. }
-        let p2 = { x=2.; y=1. }
-        equal 10. (p1 * p2).x
+[<Fact>]
+let ``Inline custom operators with types work`` () =
+    // See #230
+    let p1 = { x=5.; y=10. }
+    let p2 = { x=2.; y=1. }
+    equal 10. (p1 * p2).x
 
-    testCase "Custom operator overloads work" <| fun () ->
-        let x = { value = 5 }
-        x + 2 |> equal { value = 7 }
-        3 + x |> equal 10
+[<Fact>]
+let ``Custom operator overloads work`` () =
+    let x = { value = 5 }
+    x + 2 |> equal { value = 7 }
+    3 + x |> equal 10
 
-    testCase "Custom Pow works" <| fun () -> // See #2496
-        let x = { Ok = false }
-        x ** 2 |> equal { Ok = true }
+[<Fact>]
+let ``Custom Pow works`` () =
+    // See #2496
+    let x = { Ok = false }
+    x ** 2 |> equal { Ok = true }
 
-    testCase "Custom Exp works" <| fun () ->
-        let x = { value = 0 }
-        x |> exp |> equal { value = 1 }
+[<Fact>]
+let ``Custom Exp works`` () =
+    let x = { value = 0 }
+    x |> exp |> equal { value = 1 }
+
+
+module TypeOperators =
+    let tests() =
+        ``Custom operators with types work`` ()
+        ``Inline custom operators with types work`` ()
+        ``Custom operator overloads work`` ()
+        ``Custom Pow works`` ()
+        ``Custom Exp works`` ()
 
 let (+) (x: int) (y: int) = x * y
 
@@ -54,28 +69,45 @@ let (||||) x y = x + y
 
 let inline (>>) x y = x * y * 2
 
-let moduleOperators() =
-    testCase "Custom operator overloads can be inlined" <| fun () ->
-        let x = { value = 5 }
-        genericAdd 4 5 |> equal 9
-        genericAdd x 2 |> equal { value = 7 }
-        genericAdd 3 x |> equal 10
+[<Fact>]
+let ``Custom operator overloads can be inlined`` () =
+    let x = { value = 5 }
+    genericAdd 4 5 |> equal 9
+    genericAdd x 2 |> equal { value = 7 }
+    genericAdd 3 x |> equal 10
 
-    testCase "Custom operators work" <| fun () ->
-        5 + 5 |> equal 25
-        10 - 2 |> equal 5
-        2 |||| 2 |> equal 4
+[<Fact>]
+let ``Custom operators work`` () =
+    5 + 5 |> equal 25
+    10 - 2 |> equal 5
+    2 |||| 2 |> equal 4
 
-    testCase "Inline custom operators work" <| fun () ->
-        5 >> 5 |> equal 50
+[<Fact>]
+let ``Inline custom operators work`` () =
+    5 >> 5 |> equal 50
 
-let operatorsAsFunctions() =
-    testCase "logical or" <| fun () ->
-        let x = [true] |> List.fold (||) false
-        x |> equal true
-    testCase "logical and" <| fun () ->
-        let x = [true] |> List.fold (&&) false
-        x |> equal false
+
+module ModuleOperators =
+    let tests() =
+        ``Custom operator overloads can be inlined`` ()
+        ``Custom operators work`` ()
+        ``Inline custom operators work`` ()
+
+[<Fact>]
+let ``logical or`` () =
+    let x = [true] |> List.fold (||) false
+    x |> equal true
+
+[<Fact>]
+let ``logical and`` () =
+    let x = [true] |> List.fold (&&) false
+    x |> equal false
+
+
+module OperatorsAsFunctions =
+    let tests() =
+        ``logical or`` ()
+        ``logical and`` ()
 
 type [<Measure>] px
 type [<Measure>] em
@@ -90,16 +122,24 @@ type ToLength = ToLength with
 
 let inline toLen x : string = (Unchecked.defaultof<ToLength> &. x) D1 D2 D3
 
-let operatorsForOverloads() =
-    testCase "first overload" <| fun () ->
-        toLen 1<px>
-        |> equal "1px"
-    testCase "second overload" <| fun () ->
-        toLen 1<em>
-        |> equal "1em"
+[<Fact>]
+let ``first overload`` () =
+    toLen 1<px>
+    |> equal "1px"
+
+[<Fact>]
+let ``second overload`` () =
+    toLen 1<em>
+    |> equal "1em"
+
+
+module OperatorsForOverloads =
+    let tests() =
+        ``first overload`` ()
+        ``second overload`` ()
 
 let tests() =
-  typeOperators()
-  moduleOperators()
-  operatorsAsFunctions()
-  operatorsForOverloads()
+    TypeOperators.tests()
+    ModuleOperators.tests()
+    OperatorsAsFunctions.tests()
+    OperatorsForOverloads.tests()

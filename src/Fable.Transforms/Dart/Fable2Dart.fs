@@ -2376,6 +2376,32 @@ module Util =
         let args, body, returnType =
             getMemberArgsAndBody com ctx (NonAttached memb.Name) entAndMembGenParams info memb.Args memb.Body
 
+        let isFact =
+            info.Attributes
+            |> Seq.exists (fun att -> att.Entity.FullName.EndsWith(".FactAttribute", System.StringComparison.Ordinal))
+
+        let body, returnType =
+            if isFact then
+                let testName = info.DisplayName
+
+                let test = com.GetImportIdent(ctx, "test", "package:test/test.dart", Fable.Any)
+
+                let callback =
+                    match memb.Body.Type with
+                    | Fable.DeclaredType(ent, _) when com.GetEntity(ent).FullName = Types.fsharpAsyncGeneric ->
+                        let asyncThunk = Expression.anonymousFunction ([], body, returnType)
+                        let asyncValue = Expression.invocationExpression (asyncThunk, returnType)
+                        let future = Util.libCall com ctx Fable.Any "Async" "startAsFuture" [ asyncValue ]
+                        Expression.anonymousFunction ([], [ Statement.returnStatement future ], Dynamic)
+                    | _ -> Expression.anonymousFunction ([], body, returnType)
+
+                let registration =
+                    Expression.invocationExpression (test.Expr, [ Expression.stringLiteral testName; callback ], Void)
+
+                [ Statement.ExpressionStatement registration ], Void
+            else
+                body, returnType
+
         let isEntryPoint =
             info.Attributes |> Seq.exists (fun att -> att.Entity.FullName = Atts.entryPoint)
 
